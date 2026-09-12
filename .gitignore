@@ -1,0 +1,65 @@
+# =====================================================================
+# Autoflow — what never goes to the repository
+# =====================================================================
+#
+# This repository is public. Treat every entry below as load-bearing.
+# The rule applied throughout: if a value identifies the network, the
+# premises, a device or a person, it is read from configuration at
+# runtime and never committed.
+
+# ---------- credentials ----------
+secrets.yaml
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*-key.json
+*_key.json
+*credentials*.json
+*service-account*.json
+*service_account*.json
+
+# ---------- Home Assistant internal state ----------
+# .storage holds login tokens, every integration's saved credentials,
+# and core.config — which contains the home zone latitude and longitude.
+# Excluded wholesale rather than file by file, so a new file added by a
+# future Home Assistant release cannot slip through.
+.storage/
+**/.storage/
+
+# ---------- databases ----------
+*.db
+*.db-shm
+*.db-wal
+home-assistant_v2.db*
+
+# ---------- logs and operational data ----------
+# Runtime, energy and start-count exports reveal occupancy patterns.
+*.log
+*.log.*
+logs/
+backups/
+*.csv
+watchdog_report.json
+backup_status.json
+
+# ---------- archives and images ----------
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.img
+*.img.gz
+
+# ---------- device and network inventories ----------
+known_devices.yaml
+ip_bans.yaml
+
+# ---------- editor and OS noise ----------
+.DS_Store
+._*
+*.swp
+__pycache__/
+*.pyc
+.venv/

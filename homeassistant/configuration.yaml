@@ -1,0 +1,1625 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+tts:
+  - platform: google_translate
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+command_line:
+  # command_state makes Home Assistant read the REAL relay state every 30s
+  # instead of assuming whatever it last commanded. Every safety automation
+  # conditions on these switches, so they need to reflect hardware, not belief.
+  # Requires the /relay/<id>/state endpoint in relay_api.py.
+  # Watchdog report, added 21-Aug-2026.
+  #
+  # The watchdog runs on the HOST, outside Home Assistant, because the one
+  # fault HA cannot report is its own death. It writes a JSON file; this reads
+  # it and automation 40 mails the contents.
+  #
+  # `seq` only increments when something was actually repaired or gave up, so
+  # a state change on this sensor is an unambiguous "there is news" signal.
+  # Silence means healthy.
+  - sensor:
+      name: "Watchdog"
+      command: "cat /config/watchdog_report.json"
+      value_template: "{{ value_json.seq }}"
+      json_attributes:
+        - checked
+        - healthy
+        - acted
+        - failed
+      scan_interval: 60
+
+  # Log summary, added 29-Aug-2026.
+  #
+  # Every fault this project has turned up was sitting in home-assistant.log
+  # for weeks before anyone noticed. The information was never missing; it was
+  # in a file nobody opens.
+  #
+  # log_summary.py counts the last 24 hours and describes it in plain English -
+  # "Kitchen pump's power meter did not answer - 35 times" rather than
+  # "pymodbus.logging No response received after 3 retries". The state is the
+  # error count, so an automation can watch it climb.
+  #
+  # Anything unrecognised is passed through rather than hidden. A strange error
+  # still reaches the screen, just without a friendly name.
+  - sensor:
+      name: "Log Summary"
+      command: "python3 /config/log_summary.py"
+      value_template: "{{ value_json.count }}"
+      unit_of_measurement: "errors"
+      json_attributes:
+        - headline
+        - summary
+        - latest
+        - latest_at
+        - warnings
+      scan_interval: 300
+
+  # Kiosk lock state, added 29-Aug-2026.
+  #
+  # The screen is unlocked ON THE PANEL - six seconds of finger hold - so Home
+  # Assistant has no way of knowing it happened. Without reading the state
+  # back, the toggle would sit "on" over an unlocked screen indefinitely: the
+  # UI and the hardware disagreeing, which is the same fault as a relay
+  # reporting ON while dead.
+  #
+  # A missing file reads as unlocked. If the daemon is not running, the honest
+  # answer is "not locked" - claiming locked while the touchscreen is live
+  # would be the worse lie.
+  - binary_sensor:
+      name: "Kiosk Screen Locked"
+      command: "cat /config/screenlock_state.txt 2>/dev/null || echo unlocked"
+      payload_on: "locked"
+      payload_off: "unlocked"
+      scan_interval: 5
+
+  - switch:
+      name: "Kitchen Pump"
+      command_on: "curl -s http://127.0.0.1:5000/relay/1/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/1/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/1/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.kitchen_pump', 'on') }}{% endif %}
+      icon: mdi:water-pump
+  - switch:
+      name: "Bath Pump"
+      command_on: "curl -s http://127.0.0.1:5000/relay/2/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/2/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/2/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.bath_pump', 'on') }}{% endif %}
+      icon: mdi:water-pump
+  - switch:
+      name: "Utility Pump"
+      command_on: "curl -s http://127.0.0.1:5000/relay/3/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/3/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/3/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.utility_pump', 'on') }}{% endif %}
+      icon: mdi:water-pump
+  # DVR internet gate. command_state added 18-Aug-2026.
+  #
+  # This switch had no state feedback, so it showed whatever it last
+  # commanded. On 18-Aug the kernel had ip_forward=0 while the iptables rules
+  # were still in place - the DVR had been cut off for hours and the dashboard
+  # said nothing, because nothing was looking.
+  #
+  # /internet/state now reads the kernel directly and reports 1 only when
+  # routing is enabled AND every rule is present. A half-open gate reads as
+  # off, which is the truth: it passes no traffic.
+  #
+  # DEFAULT IS OFF, DELIBERATELY. The DVR takes its time from the Pi via
+  # chrony, so the only thing it loses is the Hik-Connect cloud tunnel. Turn
+  # this on when you want the phone app, and automation 37 turns it off again
+  # after 30 minutes.
+  - switch:
+      name: "DVR Internet Access"
+      icon: mdi:shield-lock
+      command_on: "curl -s http://127.0.0.1:5000/internet/on"
+      command_off: "curl -s http://127.0.0.1:5000/internet/off"
+      command_state: "curl -s http://127.0.0.1:5000/internet/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.dvr_internet_access', 'on') }}{% endif %}
+
+  # value_template hardened 17-Aug-2026.
+  #
+  # It used to be `{{ value == '1' }}`. That reads a failed poll as OFF: if the
+  # curl times out or the API blips, `value` is an empty string, the comparison
+  # is false, and Home Assistant concludes the relay is open. With current
+  # still flowing, `<pump>_pump_external_start` then declares the pump was
+  # started at the wall - a frightening and completely false alarm, seen while
+  # the kitchen pump was running normally at 1.27 A.
+  #
+  # "The relay says off" and "the relay did not answer" are different facts and
+  # must not collapse into the same state. Anything other than a clean 0 or 1
+  # now holds the previous state instead of inventing a new one.
+
+  # Relays 4-8. command_state added 16-Aug-2026.
+  #
+  # These five previously had command_on/off only, so Home Assistant showed
+  # whatever it last commanded and never checked. Relays 5, 7 and 8 stopped
+  # working at the pin and the dashboard went on showing them ON for weeks -
+  # there was nothing anywhere that could have told you otherwise.
+  #
+  # relay_api.py reads the pin back rather than reporting what it wrote, so
+  # a pin that refuses to change is reported honestly as off. With this in
+  # place a dead channel now looks dead on the dashboard: you press it, it
+  # springs back. That is the point.
+  # Channel 4 is the enclosure exhaust fan as of 16-Aug-2026. It was on
+  # channel 8 until GPIO 6 stopped being able to pull low; 4 is one of the two
+  # channels still known good.
+  #
+  # Named for what it does rather than which channel it sits on. The next time
+  # a channel is swapped the automations should not need to know.
+  - switch:
+      name: "Enclosure Fan"
+      command_on: "curl -s http://127.0.0.1:5000/relay/4/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/4/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/4/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.enclosure_fan', 'on') }}{% endif %}
+      icon: mdi:fan
+  - switch:
+      name: "Relay 5"
+      command_on: "curl -s http://127.0.0.1:5000/relay/5/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/5/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/5/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.relay_5', 'on') }}{% endif %}
+      icon: mdi:toggle-switch
+  - switch:
+      name: "Relay 6"
+      command_on: "curl -s http://127.0.0.1:5000/relay/6/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/6/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/6/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.relay_6', 'on') }}{% endif %}
+      icon: mdi:toggle-switch
+  - switch:
+      name: "Relay 7"
+      command_on: "curl -s http://127.0.0.1:5000/relay/7/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/7/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/7/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.relay_7', 'on') }}{% endif %}
+      icon: mdi:toggle-switch
+  # KNOWN FAULTY 16-Aug-2026: GPIO 6 will not pull below ~1.1 V, so this
+  # channel cannot switch. Left defined so the dashboard can show it as dead
+  # rather than the entity simply vanishing. Same for relays 5 and 7.
+  - switch:
+      name: "Relay 8"
+      command_on: "curl -s http://127.0.0.1:5000/relay/8/on"
+      command_off: "curl -s http://127.0.0.1:5000/relay/8/off"
+      command_state: "curl -s http://127.0.0.1:5000/relay/8/state"
+      value_template: >
+        {% if value | trim in ['0','1'] %}{{ value | trim == '1' }}
+        {% else %}{{ is_state('switch.relay_8', 'on') }}{% endif %}
+      icon: mdi:toggle-switch
+
+
+modbus:
+  # Serial ports are addressed by stable hardware ID, not by ttyACM number.
+  # ttyACM assignment depends on the order Linux enumerates devices and has
+  # already shuffled once (Volume 2, section C). The by-id path encodes the
+  # converter's own serial number (BD653FABCD) and the physical channel on it
+  # (if00/if02/if04/if06), so it cannot move.
+  #   if02 = ttyACM1 = Kitchen   if04 = ttyACM2 = Utility   if06 = ttyACM3 = Bath
+  - name: pzem_kitchen
+    type: serial
+    port: /hostdev/serial/by-id/usb-WCH.CN_USB_Quad_Serial_BD653FABCD-if02
+    baudrate: 9600
+    bytesize: 8
+    method: rtu
+    parity: N
+    stopbits: 1
+    sensors:
+      - name: "Pump 1 Voltage"
+        scan_interval: 10
+        address: 0
+        input_type: input
+        slave: 1
+        precision: 1
+        data_type: uint16
+        scale: 0.1
+        # Corrupt Modbus frames were recording voltage in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 300
+        unit_of_measurement: V
+        device_class: voltage
+      - name: "Pump 1 Current"
+        scan_interval: 5
+        address: 1
+        input_type: input
+        slave: 1
+        precision: 3
+        data_type: uint32
+        swap: word
+        scale: 0.001
+        # Corrupt Modbus frames were recording current in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 30
+        unit_of_measurement: A
+        device_class: current
+      - name: "Pump 1 Power"
+        scan_interval: 5
+        address: 3
+        input_type: input
+        slave: 1
+        precision: 1
+        data_type: uint32
+        swap: word
+        scale: 0.1
+        # Corrupt Modbus frames were recording power in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 8000
+        unit_of_measurement: W
+        device_class: power
+      # Renamed to _raw 23-Aug-2026. Energy is CUMULATIVE, so clamping is
+      # the wrong tool - a running total pinned to a maximum is still
+      # wrong, and the utility meters would carry the error forever.
+      # The guarded template sensor "Pump 1 Energy" now takes this
+      # entity_id and rejects implausible jumps.
+      - name: "Pump 1 Energy Raw"
+        scan_interval: 60
+        address: 5
+        input_type: input
+        slave: 1
+        precision: 3
+        data_type: uint32
+        swap: word
+        scale: 0.001
+        unit_of_measurement: kWh
+        device_class: energy
+        state_class: total_increasing
+      - name: "Pump 1 Frequency"
+        scan_interval: 60
+        address: 7
+        input_type: input
+        slave: 1
+        precision: 1
+        data_type: uint16
+        scale: 0.1
+        unit_of_measurement: Hz
+        device_class: frequency
+      - name: "Pump 1 Power Factor"
+        scan_interval: 60
+        address: 8
+        input_type: input
+        slave: 1
+        precision: 2
+        data_type: uint16
+        scale: 0.01
+        device_class: power_factor
+
+  - name: pzem_bath
+    type: serial
+    port: /hostdev/serial/by-id/usb-WCH.CN_USB_Quad_Serial_BD653FABCD-if06
+    baudrate: 9600
+    bytesize: 8
+    method: rtu
+    parity: N
+    stopbits: 1
+    sensors:
+      - name: "Pump 2 Voltage"
+        scan_interval: 10
+        address: 0
+        input_type: input
+        slave: 3
+        precision: 1
+        data_type: uint16
+        scale: 0.1
+        # Corrupt Modbus frames were recording voltage in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 300
+        unit_of_measurement: V
+        device_class: voltage
+      - name: "Pump 2 Current"
+        scan_interval: 5
+        address: 1
+        input_type: input
+        slave: 3
+        precision: 3
+        data_type: uint32
+        swap: word
+        scale: 0.001
+        # Corrupt Modbus frames were recording current in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 30
+        unit_of_measurement: A
+        device_class: current
+      - name: "Pump 2 Power"
+        scan_interval: 5
+        address: 3
+        input_type: input
+        slave: 3
+        precision: 1
+        data_type: uint32
+        swap: word
+        scale: 0.1
+        # Corrupt Modbus frames were recording power in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 8000
+        unit_of_measurement: W
+        device_class: power
+      # Renamed to _raw 23-Aug-2026. Energy is CUMULATIVE, so clamping is
+      # the wrong tool - a running total pinned to a maximum is still
+      # wrong, and the utility meters would carry the error forever.
+      # The guarded template sensor "Pump 2 Energy" now takes this
+      # entity_id and rejects implausible jumps.
+      - name: "Pump 2 Energy Raw"
+        scan_interval: 60
+        address: 5
+        input_type: input
+        slave: 3
+        precision: 3
+        data_type: uint32
+        swap: word
+        scale: 0.001
+        unit_of_measurement: kWh
+        device_class: energy
+        state_class: total_increasing
+      - name: "Pump 2 Frequency"
+        scan_interval: 60
+        address: 7
+        input_type: input
+        slave: 3
+        precision: 1
+        data_type: uint16
+        scale: 0.1
+        unit_of_measurement: Hz
+        device_class: frequency
+      - name: "Pump 2 Power Factor"
+        scan_interval: 60
+        address: 8
+        input_type: input
+        slave: 3
+        precision: 2
+        data_type: uint16
+        scale: 0.01
+        device_class: power_factor
+
+  - name: pzem_utility
+    type: serial
+    port: /hostdev/serial/by-id/usb-WCH.CN_USB_Quad_Serial_BD653FABCD-if04
+    baudrate: 9600
+    bytesize: 8
+    method: rtu
+    parity: N
+    stopbits: 1
+    sensors:
+      - name: "Pump 3 Voltage"
+        scan_interval: 10
+        address: 0
+        input_type: input
+        slave: 2
+        precision: 1
+        data_type: uint16
+        scale: 0.1
+        # Corrupt Modbus frames were recording voltage in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 300
+        unit_of_measurement: V
+        device_class: voltage
+      - name: "Pump 3 Current"
+        scan_interval: 5
+        address: 1
+        input_type: input
+        slave: 2
+        precision: 3
+        data_type: uint32
+        swap: word
+        scale: 0.001
+        # Corrupt Modbus frames were recording current in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 30
+        unit_of_measurement: A
+        device_class: current
+      - name: "Pump 3 Power"
+        scan_interval: 5
+        address: 3
+        input_type: input
+        slave: 2
+        precision: 1
+        data_type: uint32
+        swap: word
+        scale: 0.1
+        # Corrupt Modbus frames were recording power in the
+        # millions - RS-485 noise from the motor cabling. Clamped so a
+        # mangled frame is bounded rather than absurd.
+        min_value: 0
+        max_value: 8000
+        unit_of_measurement: W
+        device_class: power
+      # Renamed to _raw 23-Aug-2026. Energy is CUMULATIVE, so clamping is
+      # the wrong tool - a running total pinned to a maximum is still
+      # wrong, and the utility meters would carry the error forever.
+      # The guarded template sensor "Pump 3 Energy" now takes this
+      # entity_id and rejects implausible jumps.
+      - name: "Pump 3 Energy Raw"
+        scan_interval: 60
+        address: 5
+        input_type: input
+        slave: 2
+        precision: 3
+        data_type: uint32
+        swap: word
+        scale: 0.001
+        unit_of_measurement: kWh
+        device_class: energy
+        state_class: total_increasing
+      - name: "Pump 3 Frequency"
+        scan_interval: 60
+        address: 7
+        input_type: input
+        slave: 2
+        precision: 1
+        data_type: uint16
+        scale: 0.1
+        unit_of_measurement: Hz
+        device_class: frequency
+      - name: "Pump 3 Power Factor"
+        scan_interval: 60
+        address: 8
+        input_type: input
+        slave: 2
+        precision: 2
+        data_type: uint16
+        scale: 0.01
+        device_class: power_factor
+
+
+shell_command:
+  # FIXED 15-Aug-2026. These previously called `vcgencmd display_power`, which
+  # failed for TWO independent reasons:
+  #
+  #   1. shell_command runs INSIDE the Home Assistant container. vcgencmd is a
+  #      Raspberry Pi host binary and is not present there - confirmed with
+  #      `docker exec homeassistant which vcgencmd`, which returns nothing.
+  #   2. Even on the host, `vcgencmd display_power` is a no-op on a Pi 5 running
+  #      Wayland with the KMS driver - confirmed by running it directly and
+  #      watching the panel not change.
+  #
+  # So the "Screen OFF at Midnight" and "Screen ON at 6 AM" automations have
+  # never done anything since the day they were written.
+  #
+  # The working path is brightness_bridge.sh, which polls
+  # config/brightness.txt twice a second and writes any change to
+  # /sys/class/backlight/*/brightness. That file lives inside the config folder,
+  # which is mounted into the container as /config - so Home Assistant can write
+  # it directly, with no new API endpoint required.
+  #
+  # `sh -c` is needed because shell_command does not run commands through a
+  # shell, so the > redirect would otherwise be passed as a literal argument.
+  # ------------------------------------------------------------------
+  # BACKLIGHT
+  # ------------------------------------------------------------------
+  # Home Assistant no longer writes brightness.txt directly. It publishes the
+  # level it wants WHEN AWAKE into bright_normal.txt; screen_dim.py decides
+  # what actually reaches the panel (that level when awake, 0 when idle).
+  #
+  # Before this, both wrote the backlight and they fought: the Auto schedule
+  # reapplying a level every few minutes would wake a panel the dimmer had
+  # just blanked.
+  set_awake_brightness: 'sh -c "echo {{ level | int(255) }} > /config/bright_normal.txt"'
+
+  # Force a wake without a touch - used by alerts, so a warning never lands on
+  # a dark screen.
+  screen_wake: 'sh -c "echo 1 > /config/wake.txt"'
+
+  # ------------------------------------------------------------------
+  # IDLE DIMMING ON/OFF
+  # ------------------------------------------------------------------
+  # ADDED 16-Aug-2026. The "Kiosk - Apply Idle Dimming Setting" automation has
+  # been calling these two since the day it was written, and they did not
+  # exist. Home Assistant logs a missing service as an ERROR and carries on, so
+  # the toggle on the Settings page looked like it worked and never did.
+  #
+  # screen_dim.py reads idle_dim.txt and treats anything other than "off" as
+  # enabled - so a missing or empty file leaves dimming ON, which is the safe
+  # default for a panel that would otherwise stay lit all night.
+  idle_dim_on: 'sh -c "echo on > /config/idle_dim.txt"'
+  idle_dim_off: 'sh -c "echo off > /config/idle_dim.txt"'
+
+  # ------------------------------------------------------------------
+  # SHUTDOWN
+  # ------------------------------------------------------------------
+  # ADDED 29-Aug-2026, so the Pi can be powered down safely without SSH or
+  # reaching the physical button. Pulling the plug on a running system is how
+  # SD cards get corrupted.
+  #
+  # Same bridge arrangement as the backlight: this writes a file, and
+  # shutdown_bridge.sh - running as root from root's crontab - acts on it.
+  # `shutdown` inside the container reaches nothing.
+  #
+  # The bridge deletes any existing request when it starts, so a request that
+  # survived a power cut cannot shut the machine down on the next boot.
+  request_shutdown: 'sh -c "echo now > /config/shutdown_request.txt"'
+
+  # ------------------------------------------------------------------
+  # KIOSK SCREEN LOCK
+  # ------------------------------------------------------------------
+  # ADDED 29-Aug-2026. These are what made input_boolean.kiosk_locked real.
+  #
+  # Until now the toggle flipped, an automation navigated the kiosk to a
+  # lock-looking page, and nothing else happened - screenlock.service was
+  # disabled and no command ever reached it. Every touch still went through to
+  # Chromium underneath. The panel looked locked and was not, which is worse
+  # than no lock at all, because you would trust it.
+  #
+  # screen_lock.py grabs the touchscreen with EVIOCGRAB, so while locked
+  # Chromium receives no touch events whatsoever - not hidden, not ignored by
+  # the page, never delivered.
+  screenlock_lock: 'sh -c "echo lock > /config/screenlock_cmd.txt"'
+  screenlock_unlock: 'sh -c "echo unlock > /config/screenlock_cmd.txt"'
+
+template:
+  - sensor:
+      # state_class total_increasing is the load-bearing part: it makes Home
+      # Assistant keep long-term statistics indefinitely, regardless of
+      # purge_keep_days. The utility meters cycle off this.
+      - name: "Kitchen Start Count"
+        unique_id: kitchen_start_count
+        state_class: total_increasing
+        icon: mdi:restart
+        state: "{{ states('counter.kitchen_starts') | int(0) }}"
+
+      - name: "Bath Start Count"
+        unique_id: bath_start_count
+        state_class: total_increasing
+        icon: mdi:restart
+        state: "{{ states('counter.bath_starts') | int(0) }}"
+
+      - name: "Utility Start Count"
+        unique_id: utility_start_count
+        state_class: total_increasing
+        icon: mdi:restart
+        state: "{{ states('counter.utility_starts') | int(0) }}"
+
+      # ------------------------------------------------------------------
+      # KITCHEN EFFICIENCY - kWh per hour of running
+      #
+      # The predictive-maintenance number. A pump in good order draws a
+      # steady amount of energy for each hour it runs. When that figure
+      # climbs month on month, the pump is working harder for the same
+      # water: a worn impeller, a partly blocked line, or a water table that
+      # has dropped and left it lifting further.
+      #
+      # Neither hours nor kWh shows this alone - only the ratio does.
+      #
+      # Guarded below half an hour of runtime. Early in a month the
+      # denominator is tiny and the ratio swings wildly; publishing that
+      # noise into long-term statistics would bury the trend we are looking
+      # for. A gap is more honest than a spike.
+      - name: "Kitchen Efficiency"
+        unique_id: kitchen_efficiency
+        unit_of_measurement: "kWh/h"
+        state_class: measurement
+        icon: mdi:chart-line
+        availability: >
+          {{ states('sensor.kitchen_runtime_monthly') | float(0) >= 0.5 }}
+        state: >
+          {% set h = states('sensor.kitchen_runtime_monthly') | float(0) %}
+          {% set k = states('sensor.kitchen_energy_monthly') | float(0) %}
+          {{ (k / h) | round(2) }}
+
+      # ------------------------------------------------------------------
+      # BATH EFFICIENCY - kWh per hour of running
+      #
+      # The predictive-maintenance number. A pump in good order draws a
+      # steady amount of energy for each hour it runs. When that figure
+      # climbs month on month, the pump is working harder for the same
+      # water: a worn impeller, a partly blocked line, or a water table that
+      # has dropped and left it lifting further.
+      #
+      # Neither hours nor kWh shows this alone - only the ratio does.
+      #
+      # Guarded below half an hour of runtime. Early in a month the
+      # denominator is tiny and the ratio swings wildly; publishing that
+      # noise into long-term statistics would bury the trend we are looking
+      # for. A gap is more honest than a spike.
+      - name: "Bath Efficiency"
+        unique_id: bath_efficiency
+        unit_of_measurement: "kWh/h"
+        state_class: measurement
+        icon: mdi:chart-line
+        availability: >
+          {{ states('sensor.bath_runtime_monthly') | float(0) >= 0.5 }}
+        state: >
+          {% set h = states('sensor.bath_runtime_monthly') | float(0) %}
+          {% set k = states('sensor.bath_energy_monthly') | float(0) %}
+          {{ (k / h) | round(2) }}
+
+      # ------------------------------------------------------------------
+      # UTILITY EFFICIENCY - kWh per hour of running
+      #
+      # The predictive-maintenance number. A pump in good order draws a
+      # steady amount of energy for each hour it runs. When that figure
+      # climbs month on month, the pump is working harder for the same
+      # water: a worn impeller, a partly blocked line, or a water table that
+      # has dropped and left it lifting further.
+      #
+      # Neither hours nor kWh shows this alone - only the ratio does.
+      #
+      # Guarded below half an hour of runtime. Early in a month the
+      # denominator is tiny and the ratio swings wildly; publishing that
+      # noise into long-term statistics would bury the trend we are looking
+      # for. A gap is more honest than a spike.
+      - name: "Utility Efficiency"
+        unique_id: utility_efficiency
+        unit_of_measurement: "kWh/h"
+        state_class: measurement
+        icon: mdi:chart-line
+        availability: >
+          {{ states('sensor.utility_runtime_monthly') | float(0) >= 0.5 }}
+        state: >
+          {% set h = states('sensor.utility_runtime_monthly') | float(0) %}
+          {% set k = states('sensor.utility_energy_monthly') | float(0) %}
+          {{ (k / h) | round(2) }}
+
+      # ------------------------------------------------------------------
+      # PUMP 1 ENERGY - guarded
+      #
+      # About 4% of Modbus reads on this register come back mangled; two of
+      # the three pumps showed a "maximum" of 65.54 kWh, which is 65535 x
+      # 0.001 - the uint16 ceiling, not a reading at all.
+      #
+      # Clamping cannot fix a cumulative counter, so this rejects instead:
+      #   * anything outside a plausible absolute range
+      #   * any jump over 1 kWh in one poll - 60 kW, far beyond these pumps
+      #   * it holds the last good value rather than going unavailable, so
+      #     the telemetry-health sensors do not read a bad frame as a dead
+      #     meter
+      #
+      # It also self-heals: if a corrupt value ever became the held value,
+      # a genuine reading more than 1 kWh BELOW it is accepted, rather than
+      # the sensor being stuck high forever.
+      - name: "Pump 1 Energy"
+        unique_id: pump_1_energy_guarded
+        unit_of_measurement: kWh
+        device_class: energy
+        state_class: total_increasing
+        state: >
+          {% set raw = states('sensor.pump_1_energy_raw') | float(-1) %}
+          {% set prev = this.state | float(-1) %}
+          {% if raw < 0 or raw > 100000 %}{{ prev if prev >= 0 else 0 }}
+          {% elif prev < 0 %}{{ raw }}
+          {% elif raw >= prev and (raw - prev) <= 1 %}{{ raw }}
+          {% elif prev - raw > 1 %}{{ raw }}
+          {% else %}{{ prev }}{% endif %}
+
+      # ------------------------------------------------------------------
+      # PUMP 2 ENERGY - guarded
+      #
+      # About 4% of Modbus reads on this register come back mangled; two of
+      # the three pumps showed a "maximum" of 65.54 kWh, which is 65535 x
+      # 0.001 - the uint16 ceiling, not a reading at all.
+      #
+      # Clamping cannot fix a cumulative counter, so this rejects instead:
+      #   * anything outside a plausible absolute range
+      #   * any jump over 1 kWh in one poll - 60 kW, far beyond these pumps
+      #   * it holds the last good value rather than going unavailable, so
+      #     the telemetry-health sensors do not read a bad frame as a dead
+      #     meter
+      #
+      # It also self-heals: if a corrupt value ever became the held value,
+      # a genuine reading more than 1 kWh BELOW it is accepted, rather than
+      # the sensor being stuck high forever.
+      - name: "Pump 2 Energy"
+        unique_id: pump_2_energy_guarded
+        unit_of_measurement: kWh
+        device_class: energy
+        state_class: total_increasing
+        state: >
+          {% set raw = states('sensor.pump_2_energy_raw') | float(-1) %}
+          {% set prev = this.state | float(-1) %}
+          {% if raw < 0 or raw > 100000 %}{{ prev if prev >= 0 else 0 }}
+          {% elif prev < 0 %}{{ raw }}
+          {% elif raw >= prev and (raw - prev) <= 1 %}{{ raw }}
+          {% elif prev - raw > 1 %}{{ raw }}
+          {% else %}{{ prev }}{% endif %}
+
+      # ------------------------------------------------------------------
+      # PUMP 3 ENERGY - guarded
+      #
+      # About 4% of Modbus reads on this register come back mangled; two of
+      # the three pumps showed a "maximum" of 65.54 kWh, which is 65535 x
+      # 0.001 - the uint16 ceiling, not a reading at all.
+      #
+      # Clamping cannot fix a cumulative counter, so this rejects instead:
+      #   * anything outside a plausible absolute range
+      #   * any jump over 1 kWh in one poll - 60 kW, far beyond these pumps
+      #   * it holds the last good value rather than going unavailable, so
+      #     the telemetry-health sensors do not read a bad frame as a dead
+      #     meter
+      #
+      # It also self-heals: if a corrupt value ever became the held value,
+      # a genuine reading more than 1 kWh BELOW it is accepted, rather than
+      # the sensor being stuck high forever.
+      - name: "Pump 3 Energy"
+        unique_id: pump_3_energy_guarded
+        unit_of_measurement: kWh
+        device_class: energy
+        state_class: total_increasing
+        state: >
+          {% set raw = states('sensor.pump_3_energy_raw') | float(-1) %}
+          {% set prev = this.state | float(-1) %}
+          {% if raw < 0 or raw > 100000 %}{{ prev if prev >= 0 else 0 }}
+          {% elif prev < 0 %}{{ raw }}
+          {% elif raw >= prev and (raw - prev) <= 1 %}{{ raw }}
+          {% elif prev - raw > 1 %}{{ raw }}
+          {% else %}{{ prev }}{% endif %}
+
+      - name: "Kitchen Runtime Hours"
+        unique_id: kitchen_runtime_hours
+        unit_of_measurement: "h"
+        device_class: duration
+        state_class: total_increasing
+        state: >
+          {{ (states('counter.kitchen_run_minutes') | float(0) / 60) | round(2) }}
+
+      # state_class total_increasing is the load-bearing part: it makes Home
+      # Assistant keep long-term statistics indefinitely, regardless of
+      # purge_keep_days. The utility meters cycle off this.
+      - name: "Bath Runtime Hours"
+        unique_id: bath_runtime_hours
+        unit_of_measurement: "h"
+        device_class: duration
+        state_class: total_increasing
+        state: >
+          {{ (states('counter.bath_run_minutes') | float(0) / 60) | round(2) }}
+
+      # state_class total_increasing is the load-bearing part: it makes Home
+      # Assistant keep long-term statistics indefinitely, regardless of
+      # purge_keep_days. The utility meters cycle off this.
+      - name: "Utility Runtime Hours"
+        unique_id: utility_runtime_hours
+        unit_of_measurement: "h"
+        device_class: duration
+        state_class: total_increasing
+        state: >
+          {{ (states('counter.utility_run_minutes') | float(0) / 60) | round(2) }}
+
+      - name: "Pumps Running Count"
+        state: >
+          {% set p1 = 1 if is_state('switch.kitchen_pump', 'on') else 0 %}
+          {% set p2 = 1 if is_state('switch.bath_pump', 'on') else 0 %}
+          {% set p3 = 1 if is_state('switch.utility_pump', 'on') else 0 %}
+          {{ p1 + p2 + p3 }}
+      # NOTE ON RESOLUTION: Home Assistant re-renders templates containing
+      # now() once a minute, on the minute. A seconds display therefore only
+      # changes once every 60 seconds, which looks like the timer is broken or
+      # updating at random. Showing minutes matches what it can actually do.
+      # For a live, ticking elapsed time see the dashboard - it uses the
+      # frontend's "last changed" rendering, which updates client-side every
+      # second without asking the server for anything.
+      - name: "Pump 1 Run Timer"
+        # Keyed off ACTUAL current draw, not the relay. A pump started from the
+        # external manual switch leaves the relay showing 'off', so this used to
+        # read "Not Running" while the motor was going.
+        state: >
+          {% if is_state('binary_sensor.kitchen_pump_running', 'on') %}
+            {% set m = ((now() - states.binary_sensor.kitchen_pump_running.last_changed).total_seconds() / 60) | int %}
+            {% if m >= 60 %}{{ m // 60 }} hr {{ '%02d' | format(m % 60) }} min
+            {% else %}{{ m }} min{% endif %}
+          {% else %}Not Running{% endif %}
+      - name: "Pump 1 kW"
+        unit_of_measurement: "kW"
+        state: "{{ (states('sensor.pump_1_power') | float(0) / 1000) | round(2) }}"
+      - name: "Pump 1 Voltage Status"
+        state: >
+          {% set v = states('sensor.pump_1_voltage') | float(0) %}
+          {% if v > 250 %}High Voltage - Check!
+          {% elif v < 210 and v > 0 %}Low Voltage - Check!
+          {% elif v > 0 %}Normal ({{ v }}V)
+          {% else %}Waiting...{% endif %}
+      - name: "Pump 2 Run Timer"
+        # Keyed off ACTUAL current draw, not the relay. A pump started from the
+        # external manual switch leaves the relay showing 'off', so this used to
+        # read "Not Running" while the motor was going.
+        state: >
+          {% if is_state('binary_sensor.bath_pump_running', 'on') %}
+            {% set m = ((now() - states.binary_sensor.bath_pump_running.last_changed).total_seconds() / 60) | int %}
+            {% if m >= 60 %}{{ m // 60 }} hr {{ '%02d' | format(m % 60) }} min
+            {% else %}{{ m }} min{% endif %}
+          {% else %}Not Running{% endif %}
+      - name: "Pump 2 kW"
+        unit_of_measurement: "kW"
+        state: "{{ (states('sensor.pump_2_power') | float(0) / 1000) | round(2) }}"
+      - name: "Pump 2 Voltage Status"
+        state: >
+          {% set v = states('sensor.pump_2_voltage') | float(0) %}
+          {% if v > 250 %}High Voltage - Check!
+          {% elif v < 210 and v > 0 %}Low Voltage - Check!
+          {% elif v > 0 %}Normal ({{ v }}V)
+          {% else %}Waiting...{% endif %}
+      - name: "Pump 3 Run Timer"
+        # Keyed off ACTUAL current draw, not the relay. A pump started from the
+        # external manual switch leaves the relay showing 'off', so this used to
+        # read "Not Running" while the motor was going.
+        state: >
+          {% if is_state('binary_sensor.utility_pump_running', 'on') %}
+            {% set m = ((now() - states.binary_sensor.utility_pump_running.last_changed).total_seconds() / 60) | int %}
+            {% if m >= 60 %}{{ m // 60 }} hr {{ '%02d' | format(m % 60) }} min
+            {% else %}{{ m }} min{% endif %}
+          {% else %}Not Running{% endif %}
+      - name: "Pump 3 kW"
+        unit_of_measurement: "kW"
+        state: "{{ (states('sensor.pump_3_power') | float(0) / 1000) | round(2) }}"
+      - name: "Pump 3 Voltage Status"
+        state: >
+          {% set v = states('sensor.pump_3_voltage') | float(0) %}
+          {% if v > 250 %}High Voltage - Check!
+          {% elif v < 210 and v > 0 %}Low Voltage - Check!
+          {% elif v > 0 %}Normal ({{ v }}V)
+          {% else %}Waiting...{% endif %}
+
+      # ------------------------------------------------------------------
+      # MAINS POWER STATUS (for the dashboard widget)
+      # ------------------------------------------------------------------
+      # The PZEM modules are powered from the line they measure, so if the
+      # mains fails they stop responding entirely. That is what makes them a
+      # reliable power-cut detector: the Pi stays alive on its UPS and can
+      # still report that the pump supply is dead.
+      #
+      # We take the HIGHEST of the three voltages rather than any single one,
+      # so a single failed or unplugged PZEM does not look like a power cut.
+      - name: "Pump Supply Voltage"
+        unit_of_measurement: "V"
+        device_class: voltage
+        state: >
+          {% set vs = [states('sensor.pump_1_voltage') | float(0),
+                       states('sensor.pump_2_voltage') | float(0),
+                       states('sensor.pump_3_voltage') | float(0)] %}
+          {{ vs | max | round(1) }}
+
+      - name: "Pump Power Status"
+        icon: >
+          {% set v = states('sensor.pump_supply_voltage') | float(0) %}
+          {% if v > 250 %}mdi:flash-alert
+          {% elif v > 210 %}mdi:transmission-tower
+          {% elif v > 100 %}mdi:flash-alert
+          {% else %}mdi:transmission-tower-off{% endif %}
+        state: >
+          {% set v = states('sensor.pump_supply_voltage') | float(0) %}
+          {% if v > 250 %}High Voltage ({{ v }}V)
+          {% elif v >= 210 %}Power OK ({{ v }}V)
+          {% elif v > 100 %}Low Voltage ({{ v }}V)
+          {% else %}POWER CUT{% endif %}
+
+  - binary_sensor:
+      # ------------------------------------------------------------------
+      # IS THE PUMP ACTUALLY RUNNING?
+      # ------------------------------------------------------------------
+      # The relay switch only reflects what Home Assistant commanded. A pump
+      # started from the external manual switch leaves it showing 'off' while
+      # the motor is running - so every safety automation that conditions on
+      # the switch was blind to manual starts.
+      #
+      # These read current instead: above 0.3A means the motor is drawing
+      # power, whatever caused it. 0.3A is far below any real pump load and
+      # well above sensor noise.
+      #
+      # NOTE: detection is not the same as control. If a pump was started
+      # externally, Home Assistant can warn about a dry run or an overlong run
+      # but cannot stop it - the manual switch bypasses the relay. Those cases
+      # alert rather than shut down.
+      - name: "Kitchen Pump Running"
+        device_class: running
+        delay_off:
+          seconds: 10
+        state: "{{ states('sensor.pump_1_current') | float(0) > 0.3 }}"
+
+      - name: "Bath Pump Running"
+        device_class: running
+        delay_off:
+          seconds: 10
+        state: "{{ states('sensor.pump_2_current') | float(0) > 0.3 }}"
+
+      - name: "Utility Pump Running"
+        device_class: running
+        delay_off:
+          seconds: 10
+        state: "{{ states('sensor.pump_3_current') | float(0) > 0.3 }}"
+
+      # Running, but Home Assistant did not ask for it = external manual switch
+      - name: "Kitchen Pump External Start"
+        delay_on:
+          seconds: 8
+        state: >
+          {{ states('sensor.pump_1_current') | float(0) > 0.3
+             and is_state('switch.kitchen_pump', 'off') }}
+
+      - name: "Bath Pump External Start"
+        delay_on:
+          seconds: 8
+        state: >
+          {{ states('sensor.pump_2_current') | float(0) > 0.3
+             and is_state('switch.bath_pump', 'off') }}
+
+      - name: "Utility Pump External Start"
+        delay_on:
+          seconds: 8
+        state: >
+          {{ states('sensor.pump_3_current') | float(0) > 0.3
+             and is_state('switch.utility_pump', 'off') }}
+
+      # on  = mains present at the pumps
+      # off = power cut
+      # delay_off waits 5s before declaring a cut, so a single missed Modbus
+      # read does not flip the widget to POWER CUT.
+      - name: "Pump Mains Power"
+        device_class: power
+        delay_off:
+          seconds: 5
+        delay_on:
+          seconds: 5
+        state: >
+          {{ states('sensor.pump_supply_voltage') | float(0) > 100 }}
+
+      # ------------------------------------------------------------------
+      # TELEMETRY HEALTH - added 17-Aug-2026
+      # ------------------------------------------------------------------
+      # WHY THIS EXISTS
+      #
+      # Every safety layer in this system reads the PZEM meters: dry-run,
+      # max run time, tank-full backstop, external-start detection. On
+      # 17-Aug the USB converter re-enumerated, the Modbus connection died,
+      # and all of them went quiet - while the pumps still started on
+      # demand. Nothing failed loudly. The protections were simply absent
+      # and the dashboard looked normal.
+      #
+      # A safety system that degrades silently to no safety is worse than
+      # none, because it is trusted.
+      #
+      # TWO CONDITIONS, NOT ONE
+      #
+      # "Not unavailable" is not enough. A meter frozen on its last reading
+      # looks perfectly healthy and tells you nothing. So this also checks
+      # freshness via last_reported, which Home Assistant updates on every
+      # poll even when the value has not changed. Scan interval is 5s, so
+      # 30s means roughly six consecutive failed polls - long enough not to
+      # trip on one dropped read, short enough to catch a dead port before
+      # a pump has done any harm.
+      - name: "Kitchen Telemetry OK"
+        # connectivity, not problem: this reads "on" when the meter is
+        # healthy. device_class problem would render a working meter as
+        # "Problem" - an alarm that means the opposite of what it says.
+        device_class: connectivity
+        state: >
+          {% set c = states.sensor.pump_1_current %}
+          {% set v = states.sensor.pump_1_voltage %}
+          {{ c is not none and v is not none
+             and c.state not in ['unknown','unavailable','none','']
+             and v.state not in ['unknown','unavailable','none','']
+             and (now() - c.last_reported).total_seconds() < 30 }}
+
+      - name: "Bath Telemetry OK"
+        # connectivity, not problem: this reads "on" when the meter is
+        # healthy. device_class problem would render a working meter as
+        # "Problem" - an alarm that means the opposite of what it says.
+        device_class: connectivity
+        state: >
+          {% set c = states.sensor.pump_2_current %}
+          {% set v = states.sensor.pump_2_voltage %}
+          {{ c is not none and v is not none
+             and c.state not in ['unknown','unavailable','none','']
+             and v.state not in ['unknown','unavailable','none','']
+             and (now() - c.last_reported).total_seconds() < 30 }}
+
+      - name: "Utility Telemetry OK"
+        # connectivity, not problem: this reads "on" when the meter is
+        # healthy. device_class problem would render a working meter as
+        # "Problem" - an alarm that means the opposite of what it says.
+        device_class: connectivity
+        state: >
+          {% set c = states.sensor.pump_3_current %}
+          {% set v = states.sensor.pump_3_voltage %}
+          {{ c is not none and v is not none
+             and c.state not in ['unknown','unavailable','none','']
+             and v.state not in ['unknown','unavailable','none','']
+             and (now() - c.last_reported).total_seconds() < 30 }}
+
+      # Any meter down at all. Used by the dashboard for a single banner
+      # rather than three, and by the weekly report.
+      - name: "Any Telemetry Fault"
+        device_class: problem
+        state: >
+          {{ not (is_state('binary_sensor.kitchen_telemetry_ok','on')
+                  and is_state('binary_sensor.bath_telemetry_ok','on')
+                  and is_state('binary_sensor.utility_telemetry_ok','on')) }}
+
+# ==========================================
+# 🔢 SAFETY EVENT COUNTERS (reset each Sunday by the weekly report)
+# ==========================================
+counter:
+  # ------------------------------------------------------------------
+  # PUMP RUNTIME  (added 21-Aug-2026)
+  #
+  # Ticked once a minute by automation 38 while a pump is ACTUALLY running -
+  # drawing current, not merely commanded on. So a wall-switch start counts,
+  # and a relay that failed to close counts zero. That is the honest number
+  # and the only one worth comparing between pumps.
+  #
+  # WHY A COUNTER RATHER THAN QUERYING HISTORY
+  #
+  # recorder keeps 14 days. A "last 30 days" history query would silently
+  # return half the period and present it as a full month. A counter does not
+  # care what the database remembers.
+  # PUMP STARTS  (added 21-Aug-2026)
+  #
+  # Motor wear is dominated by start current, not running time. A pump doing
+  # forty short starts a day is aging far faster than one doing eight long
+  # fills, and runtime totals cannot tell those apart.
+  #
+  # Counted off <pump>_pump_running, which has a 10 second delay_off - so a
+  # momentary current blip does not register as a start and stop.
+  kitchen_starts:
+    name: Kitchen Starts
+    step: 1
+    icon: mdi:restart
+  bath_starts:
+    name: Bath Starts
+    step: 1
+    icon: mdi:restart
+  utility_starts:
+    name: Utility Starts
+    step: 1
+    icon: mdi:restart
+
+  kitchen_run_minutes:
+    name: Kitchen Run Minutes
+    step: 1
+    icon: mdi:timer-outline
+  bath_run_minutes:
+    name: Bath Run Minutes
+    step: 1
+    icon: mdi:timer-outline
+  utility_run_minutes:
+    name: Utility Run Minutes
+    step: 1
+    icon: mdi:timer-outline
+
+  dry_run_events:
+    name: Dry Run Shutdowns
+    icon: mdi:water-off
+    step: 1
+  max_runtime_events:
+    name: Max Runtime Shutdowns
+    icon: mdi:timer-alert
+    step: 1
+  interlock_blocks:
+    name: Interlock Blocks
+    icon: mdi:cancel
+    step: 1
+  power_cut_events:
+    name: Power Cuts
+    icon: mdi:transmission-tower-off
+    step: 1
+
+# ==========================================
+# ⚡ WEEKLY ENERGY METERS
+# ==========================================
+# Reset every Sunday so the weekly report can quote a clean figure.
+utility_meter:
+  # Runtime meters, added 21-Aug-2026. Each also exposes last_period - the
+  # completed previous week or month - which is what the reports read after
+  # the boundary rather than racing the reset.
+  kitchen_starts_daily:
+    source: sensor.kitchen_start_count
+    cycle: daily
+  kitchen_starts_monthly:
+    source: sensor.kitchen_start_count
+    cycle: monthly
+  bath_starts_daily:
+    source: sensor.bath_start_count
+    cycle: daily
+  bath_starts_monthly:
+    source: sensor.bath_start_count
+    cycle: monthly
+  utility_starts_daily:
+    source: sensor.utility_start_count
+    cycle: daily
+  utility_starts_monthly:
+    source: sensor.utility_start_count
+    cycle: monthly
+
+  kitchen_runtime_weekly:
+    source: sensor.kitchen_runtime_hours
+    cycle: weekly
+  kitchen_runtime_monthly:
+    source: sensor.kitchen_runtime_hours
+    cycle: monthly
+  bath_runtime_weekly:
+    source: sensor.bath_runtime_hours
+    cycle: weekly
+  bath_runtime_monthly:
+    source: sensor.bath_runtime_hours
+    cycle: monthly
+  utility_runtime_weekly:
+    source: sensor.utility_runtime_hours
+    cycle: weekly
+  utility_runtime_monthly:
+    source: sensor.utility_runtime_hours
+    cycle: monthly
+
+  # Monthly energy added 21-Aug-2026 to sit alongside the weekly meters, so
+  # the dashboard and the monthly report can show the same period for hours
+  # and kWh. Comparing a month of runtime against a week of energy would be
+  # meaningless, and nothing on screen would have said so.
+  kitchen_energy_monthly:
+    source: sensor.pump_1_energy
+    cycle: monthly
+  bath_energy_monthly:
+    source: sensor.pump_2_energy
+    cycle: monthly
+  utility_energy_monthly:
+    source: sensor.pump_3_energy
+    cycle: monthly
+
+  kitchen_energy_weekly:
+    source: sensor.pump_1_energy
+    cycle: weekly
+  bath_energy_weekly:
+    source: sensor.pump_2_energy
+    cycle: weekly
+  utility_energy_weekly:
+    source: sensor.pump_3_energy
+    cycle: weekly
+
+# ==========================================
+# ✉️ EMAIL NOTIFIER (weekly report)
+# ==========================================
+# REMOVED 14-Aug-2026. SMTP no longer supports YAML configuration - it moved to
+# a UI config flow, which is why the YAML version failed silently with
+# "Failed to initialize notification service smtp" despite valid credentials
+# (proven by a direct login test from inside the container).
+#
+# Now set up via Settings > Devices & Services > Add Integration > SMTP.
+# That creates a notify entity per recipient, called with notify.send_message
+# rather than a named notify.<service>.
+#
+# smtp_sender / smtp_username / smtp_password remain in secrets.yaml but are no
+# longer read by anything - the credentials live in the config entry instead.
+# They can be deleted once the integration is confirmed working.
+
+# ==========================================
+# 📊 FILL TIME STATISTICS
+# ==========================================
+# These summarise the "last run" helpers so the Max Run Time Limit can be set
+# from measured behaviour rather than a guess. Watch them over a couple of
+# weeks of normal fill/drain cycles, then set the limit comfortably above the
+# LONGEST figure - roughly 1.5x is a sensible margin. Setting it just above the
+# average would trip on every slightly slow fill.
+sensor:
+  - platform: statistics
+    name: "Kitchen Fill Time Average"
+    entity_id: input_number.kitchen_last_run_minutes
+    state_characteristic: mean
+    sampling_size: 100
+    max_age:
+      days: 14
+  - platform: statistics
+    name: "Kitchen Fill Time Longest"
+    entity_id: input_number.kitchen_last_run_minutes
+    state_characteristic: value_max
+    sampling_size: 100
+    max_age:
+      days: 14
+  - platform: statistics
+    name: "Bath Fill Time Average"
+    entity_id: input_number.bath_last_run_minutes
+    state_characteristic: mean
+    sampling_size: 100
+    max_age:
+      days: 14
+  - platform: statistics
+    name: "Bath Fill Time Longest"
+    entity_id: input_number.bath_last_run_minutes
+    state_characteristic: value_max
+    sampling_size: 100
+    max_age:
+      days: 14
+  - platform: statistics
+    name: "Utility Run Time Average"
+    entity_id: input_number.utility_last_run_minutes
+    state_characteristic: mean
+    sampling_size: 100
+    max_age:
+      days: 14
+  - platform: statistics
+    name: "Utility Run Time Longest"
+    entity_id: input_number.utility_last_run_minutes
+    state_characteristic: value_max
+    sampling_size: 100
+    max_age:
+      days: 14
+
+# ==========================================
+# 💾 RECORDER - protects the SD card from write wear
+# ==========================================
+# commit_interval batches database writes into one flush every 30s instead of
+# every single second, which is the single biggest reduction in SD card wear.
+# The excluded entities are cosmetic (they re-render constantly and have no
+# useful history). Voltage, current, power and energy are all still recorded.
+recorder:
+  purge_keep_days: 14
+  commit_interval: 30
+  exclude:
+    domains:
+      - update
+    entity_globs:
+      - sensor.pump_*_run_timer
+      - sensor.pump_*_voltage_status
+      - sensor.pump_*_frequency
+      - sensor.pump_*_power_factor
+      - sensor.pump_*_kw
+    entities:
+      - sensor.pumps_running_count
+
+http:
+  # use_x_forwarded_for / trusted_proxies REMOVED 15-Aug-2026.
+  #
+  # Those settings tell Home Assistant to believe the client IP claimed in an
+  # X-Forwarded-For header from the listed ranges. They are needed when a
+  # reverse proxy sits in front - which was SWAG. SWAG has been removed, so
+  # there is no proxy, and trusting that header from a /12 and a /16 would now
+  # just let any device on the LAN spoof its apparent address.
+  #
+  # Remote access is via Tailscale, which connects directly with no proxy.
+  #
+  # Brute-force protection kept on. It matters less now that nothing is exposed
+  # to the internet, but it costs nothing.
+  ip_ban_enabled: true
+  login_attempts_threshold: 5
+# google_assistant: REMOVED 13-Aug-2026.
+# Removing it eliminates a cloud dependency and a voice path that could start a
+# pump from a misheard command. It also clears the "No configuration for
+# request_sync available" error that appeared at every startup.
+# gcs-key.json and google_service_account.json are now unused - see Volume 7.
+rest:
+  # ------------------------------------------------------------------
+  # PI HEALTH
+  # ------------------------------------------------------------------
+  # Read from the relay API, which runs on the HOST. The built-in System
+  # Monitor integration was tried first and produced no temperature entity at
+  # all - it runs inside the container, which cannot see /sys/class/thermal.
+  # Reading from the host is the only way to get a trustworthy SoC temperature.
+  - resource: http://127.0.0.1:5000/system/stats
+    scan_interval: 30
+    sensor:
+      - name: "Pi CPU"
+        value_template: "{{ value_json.cpu_percent }}"
+        unit_of_measurement: "%"
+        icon: mdi:cpu-64-bit
+      - name: "Pi Memory"
+        value_template: "{{ value_json.mem_percent }}"
+        unit_of_measurement: "%"
+        icon: mdi:memory
+      - name: "Pi Temperature"
+        value_template: "{{ value_json.temp_c }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "Pi Uptime Hours"
+        value_template: "{{ value_json.uptime_hours }}"
+        unit_of_measurement: "h"
+        icon: mdi:clock-check-outline
+
+  - resource: http://127.0.0.1:5000/float/status
+    scan_interval: 2
+    binary_sensor:
+      - name: "Top Tank Full Float"
+        value_template: "{{ value_json.top_full == 1 }}"
+      - name: "Top Tank Empty Float"
+        value_template: "{{ value_json.top_empty == 1 }}"
+      - name: "Bottom Tank Full Float"
+        value_template: "{{ value_json.bottom_full == 1 }}"
+      - name: "Bottom Tank Empty Float"
+        value_template: "{{ value_json.bottom_empty == 1 }}"
+      - name: "Sump 1 Full Float"
+        value_template: "{{ value_json.sump1_full == 1 }}"
+      - name: "Sump 2 Full Float"
+        value_template: "{{ value_json.sump2_full == 1 }}"
+# ==========================================
+# ⚙️ WATER SYSTEM AUTOMATION SETTINGS (HELPERS)
+# ==========================================
+input_select:
+  screen_brightness:
+    name: Screen Brightness
+    icon: mdi:brightness-6
+    options:
+      - "Off"
+      - "Dim"
+      - "Full"
+      - "Auto"
+
+  speaker_volume:
+    name: Speaker Volume
+    icon: mdi:volume-high
+    # Reworked 17-Aug-2026, after the ALSA mixer was found at 62% (-23.88 dB)
+    # and raised to 100%. With the hardware finally at full output these
+    # presets are meaningful; before, every one of them was quiet.
+    #
+    # 98 rather than 100 leaves a sliver of headroom. The clips are mixed with
+    # a flat volume=2.0 boost, so the loudest peaks sit very close to the
+    # ceiling - the last 2% buys nothing audible and risks clipping.
+    # Reworked again 21-Aug-2026 to Off / 60 / 70 / 80 / 100.
+    #
+    # 100 rather than 98: the clips carry a flat volume=2.0 boost so their
+    # peaks sit close to the ceiling, and the last 2% was headroom against
+    # clipping. If the loudest alerts ever sound harsh at 100, that is why -
+    # the fix then is re-mastering the clips with a limiter, not backing the
+    # preset off again.
+    options:
+      - "Off"
+      - "60%"
+      - "70%"
+      - "80%"
+      - "100%"
+
+  kitchen_pump_mode:
+    name: Kitchen Pump Mode
+    options:
+      - "Manual"
+      - "Semi-Auto"
+      - "Full-Auto"
+    icon: mdi:water-sync
+
+  bath_pump_mode:
+    name: Bath Pump Mode
+    options:
+      - "Manual"
+      - "Semi-Auto"
+      - "Full-Auto"
+    icon: mdi:water-sync
+
+  utility_pump_mode:
+    name: Utility Pump Mode
+    options:
+      - "Manual"
+      - "Semi-Auto"
+    icon: mdi:water-sync
+
+input_number:
+  # ------------------------------------------------------------------
+  # PER-PUMP LIMITS - each pump is analysed independently.
+  #
+  #   Kitchen  0.5 HP   expect roughly 3-4 A running wet
+  #   Bath     1.0 HP   expect roughly 6-7 A running wet
+  #   Utility   1-1.5 HP expect roughly 7-10 A running wet
+  #
+  # Those are ballpark figures for sanity-checking your measurements, NOT
+  # settings. Measure each pump, then set its own limit. A centrifugal pump
+  # running dry typically draws around half its wet current.
+  #
+  # All of these appear in Settings > Devices & Services > Helpers, and can be
+  # put on the dashboard. Changes take effect immediately - no restart needed.
+  # ------------------------------------------------------------------
+
+  # --- Dry run: current below this = possibly running dry ---
+  kitchen_dry_run_current:
+    name: Kitchen Dry Run Current Limit
+    min: 0.1
+    max: 10.0
+    step: 0.1
+    unit_of_measurement: A
+    icon: mdi:current-ac
+  bath_dry_run_current:
+    name: Bath Dry Run Current Limit
+    min: 0.1
+    max: 15.0
+    step: 0.1
+    unit_of_measurement: A
+    icon: mdi:current-ac
+  utility_dry_run_current:
+    name: Utility Dry Run Current Limit
+    min: 0.1
+    max: 20.0
+    step: 0.1
+    unit_of_measurement: A
+    icon: mdi:current-ac
+
+  # --- Dry run: how long it must stay low before shutting down ---
+  kitchen_dry_run_seconds:
+    name: Kitchen Dry Run Wait
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: s
+    icon: mdi:timer-sand
+  bath_dry_run_seconds:
+    name: Bath Dry Run Wait
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: s
+    icon: mdi:timer-sand
+  utility_dry_run_seconds:
+    name: Utility Dry Run Wait
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: s
+    icon: mdi:timer-sand
+
+  # --- Enclosure exhaust fan (relay 4) ---
+  # Two thresholds rather than one, so the fan does not chatter on and off
+  # every few seconds while the temperature sits exactly on the line.
+  # Minimums are deliberately conservative: an unset helper defaults to its
+  # minimum, and "fan runs too often" is a much better failure than "fan never
+  # runs" in a sealed enclosure.
+  fan_on_temp:
+    name: Fan On Above
+    min: 45
+    max: 80
+    step: 1
+    unit_of_measurement: "°C"
+    icon: mdi:fan-plus
+  fan_off_temp:
+    name: Fan Off Below
+    min: 35
+    max: 75
+    step: 1
+    unit_of_measurement: "°C"
+    icon: mdi:fan-minus
+
+  # --- Max run time: flood-prevention backstop, set from measured fill times ---
+  kitchen_max_run_minutes:
+    name: Kitchen Max Run Time
+    # Minimum is deliberately 60, not 5. A helper with no stored value defaults
+    # to its minimum on first start - if that were 5, every pump would be
+    # force-stopped after five minutes until you noticed. 60 fails safe.
+    min: 60
+    max: 240
+    step: 5
+    unit_of_measurement: min
+    icon: mdi:timer-alert
+  bath_max_run_minutes:
+    name: Bath Max Run Time
+    # Minimum is deliberately 60, not 5. A helper with no stored value defaults
+    # to its minimum on first start - if that were 5, every pump would be
+    # force-stopped after five minutes until you noticed. 60 fails safe.
+    min: 60
+    max: 240
+    step: 5
+    unit_of_measurement: min
+    icon: mdi:timer-alert
+  utility_max_run_minutes:
+    name: Utility Max Run Time
+    # Minimum is deliberately 60, not 5. A helper with no stored value defaults
+    # to its minimum on first start - if that were 5, every pump would be
+    # force-stopped after five minutes until you noticed. 60 fails safe.
+    min: 60
+    max: 240
+    step: 5
+    unit_of_measurement: min
+    icon: mdi:timer-alert
+
+  # ------------------------------------------------------------------
+  # OBSERVATION HELPERS - how long the last fill actually took.
+  # Written automatically each time a pump stops. Feed the statistics
+  # sensors below, which give the average and longest fill over 14 days.
+  # Use those figures to choose a sensible Max Run Time Limit.
+  # ------------------------------------------------------------------
+  kitchen_last_run_minutes:
+    name: Kitchen Last Run
+    min: 0
+    max: 240
+    step: 0.1
+    unit_of_measurement: min
+    icon: mdi:timer-outline
+    mode: box
+
+  bath_last_run_minutes:
+    name: Bath Last Run
+    min: 0
+    max: 240
+    step: 0.1
+    unit_of_measurement: min
+    icon: mdi:timer-outline
+    mode: box
+
+  utility_last_run_minutes:
+    name: Utility Last Run
+    min: 0
+    max: 240
+    step: 0.1
+    unit_of_measurement: min
+    icon: mdi:timer-outline
+    mode: box
+
+input_text:
+  # PIN entry box for the kiosk lock. mode: password so shoulder-surfing the
+  # wall panel does not reveal it. Cleared automatically after every attempt.
+  kiosk_pin_entry:
+    name: Enter PIN
+    icon: mdi:dialpad
+    mode: password
+    max: 12
+
+input_boolean:
+  # Kiosk lock. When on, the dashboard shows status only - every control is
+  # hidden behind a conditional card. Unlocked by entering the PIN, locked
+  # again by pressing the lock button.
+  #
+  # Deliberately no auto-relock, as requested. Note the honest limitation: this
+  # stops a child pressing things, not an adult who knows Home Assistant. Anyone
+  # who can reach Settings can read the automation. Locking that down properly
+  # needs a separate non-admin user for the kiosk.
+  # Screen lock. When on, the pattern-lock card draws a fullscreen overlay on
+  # the kiosk and nothing behind it can be touched. Cleared only by drawing the
+  # correct pattern. Nothing auto-locks or auto-unlocks it.
+  kiosk_locked:
+    name: Screen Locked
+    icon: mdi:lock
+
+  # Idle dimming. Separate from the lock on purpose - dimming happens twenty
+  # times a day and must get out of the way instantly; locking is rare and
+  # should be deliberately hard to undo. Bundling them was the mistake in the
+  # first version.
+  idle_dim_enabled:
+    name: Idle Dimming
+    icon: mdi:brightness-auto
+
+  # Silences the repeating manual-mode and overflow warnings. They repeat
+  # indefinitely by design - an overflowing tank Home Assistant cannot stop is
+  # not a "said it once" situation - but there are times you know and just want
+  # quiet while you deal with it.
+  #
+  # Deliberately NOT auto-clearing on a timer: it clears when the pump stops,
+  # so it cannot be left on and silently disable warnings for the next incident.
+  mute_manual_warnings:
+    name: Mute Manual Mode Warnings
+    icon: mdi:bell-off
+
+input_datetime:
+  quiet_hours_start:
+    name: Quiet Hours Start
+    has_date: false
+    has_time: true
+    icon: mdi:weather-night
+
+  quiet_hours_end:
+    name: Quiet Hours End
+    has_date: false
+    has_time: true
+    icon: mdi:weather-sunset-up
+
+# ==========================================
+# 📡 REST COMMANDS & AUDIO/VISUAL SCRIPTS
+# ==========================================
+rest_command:
+  flash_physical_leds:
+    url: "http://127.0.0.1:5000/leds/flash/{{ duration }}"
+    method: GET

@@ -1,0 +1,107 @@
+# =====================================================================
+# config.example.yaml — deployment-specific values
+# =====================================================================
+#
+# Everything in this file differs per installation. Nothing here is
+# committed with real values; the published Home Assistant YAML reads
+# these through !secret or through environment variables.
+
+# --- Network ------------------------------------------------------------
+network:
+  # Address of the machine running Home Assistant. Required in full-URL
+  # form for the media player, which will not resolve relative paths.
+  ha_host: <HA_IP>
+  ha_port: 8123
+
+  # The relay API binds to loopback only and is never reachable from the
+  # network. Home Assistant runs with network_mode: host on the same
+  # machine, so 127.0.0.1 is sufficient. Do not change this to 0.0.0.0 —
+  # the API has no authentication and one endpoint shells out to sudo.
+  relay_api_host: 127.0.0.1
+  relay_api_port: 5000
+
+  # The recorder sits on its own interface, isolated from the main LAN.
+  dvr_host: <DVR_IP>
+  dvr_rtsp_port: 554
+
+  # The alarm listener binds to the interface facing the recorder. If that
+  # interface is down it waits and retries rather than exiting, so an
+  # unplugged cable does not produce a restart loop.
+  alarm_listen_host: <PI_IF_IP>
+  alarm_listen_port: 7200
+
+# --- Pumps --------------------------------------------------------------
+# Dry-run thresholds MUST be measured on the specific installation.
+# The values below are placeholders and will not protect anything.
+#
+# Method: record steady-state current while pumping normally, then
+# capture a dry event under supervision, and set the threshold between
+# the two. See docs/safety-design.md.
+pumps:
+  - id: pump_1
+    name: Kitchen
+    rated_hp: 0.5
+    dry_run_current_a: 0.0      # measure before enabling
+    dry_run_delay_s: 20
+    max_run_minutes: 120
+  - id: pump_2
+    name: Bath
+    rated_hp: 1.0
+    dry_run_current_a: 0.0
+    dry_run_delay_s: 20
+    max_run_minutes: 120
+  - id: pump_3
+    name: Utility
+    rated_hp: 1.5
+    dry_run_current_a: 0.0
+    dry_run_delay_s: 20
+    max_run_minutes: 120
+
+# --- Modbus -------------------------------------------------------------
+# Each energy meter is a point-to-point TTL UART link — this is not a
+# multi-drop RS-485 bus. Bind /dev wholesale into the container rather
+# than individual /dev/serial/by-id symlinks: those are recreated by udev
+# on USB re-enumeration, which leaves a stale bind mount and an empty
+# directory inside the container, with no error anywhere.
+modbus:
+  ports:
+    - /hostdev/serial/by-id/<ADAPTER_ID>-if02
+    - /hostdev/serial/by-id/<ADAPTER_ID>-if04
+    - /hostdev/serial/by-id/<ADAPTER_ID>-if06
+  baudrate: 9600
+  # Slave IDs are burned into each meter and must match the port each one
+  # is physically wired to.
+  slave_ids: [1, 2, 3]
+
+# --- Notifications ------------------------------------------------------
+notifications:
+  # Entity created by the SMTP integration, named after the recipient.
+  email_target: notify.<EMAIL_NOTIFY_ENTITY>
+  # Companion-app target; the entity name contains the device name.
+  mobile_target: notify.<MOBILE_APP_ENTITY>
+
+  # Sounds that escalate to a critical push — one that pierces silent mode
+  # and Do Not Disturb. The same list decides whether the on-screen alert
+  # shows a severity label, so screen and phone always agree.
+  critical_sounds:
+    - dry_run
+    - no_telemetry
+    - telemetry_lost
+    - telemetry_stop
+    - no_start
+    - no_stop
+    - no_supply
+    - power_cut
+
+# --- Kiosk display ------------------------------------------------------
+kiosk:
+  # Backlight level 0-255 when awake. The idle dimmer decides what
+  # actually reaches the panel.
+  brightness_day: 179          # 07:00-17:00
+  brightness_evening: 51       # 17:00-22:00
+  brightness_night: 8          # 22:00-07:00
+  idle_blank_seconds: 30
+  # 0 disables self-locking. The lock is issued deliberately; a panel that
+  # locks itself every 30 seconds is unusable.
+  idle_lock_seconds: 0
+  hold_to_unlock_seconds: 6

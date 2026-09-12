@@ -1,0 +1,2065 @@
+# REMOVED 16-Aug-2026: "Screen OFF at Midnight" / "Screen ON at 6 AM".
+# Superseded by the Auto brightness mode, which steps 80% / 20% / 5% through
+# the day and evening. They were also the last things writing the backlight
+# directly, which is what the single-owner rule exists to prevent.
+# ==========================================
+# 🤖 KITCHEN PUMP (TOP TANK) AUTOMATIONS
+# ==========================================
+
+# 1. KITCHEN: Manual & Semi-Auto - Tank Empty Alert
+- id: 'kitchen_empty_alert'
+  alias: "Kitchen Tank Empty Alert"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.top_tank_empty_float
+      to: "on"
+  condition:
+    - condition: or
+      conditions:
+        - condition: state
+          entity_id: input_select.kitchen_pump_mode
+          state: "Manual"
+        - condition: state
+          entity_id: input_select.kitchen_pump_mode
+          state: "Semi-Auto"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Warning. The kitchen tank is empty."
+        sound: kitchen_empty
+        audio_duration: 10
+        visual_duration: 60
+
+# 2. KITCHEN: Manual Mode - Tank Full Alert
+- id: 'kitchen_manual_full_alert'
+  alias: "Kitchen Tank Full Alert (Manual Mode)"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.top_tank_full_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.kitchen_pump_mode
+      state: "Manual"
+    - condition: state
+      entity_id: switch.kitchen_pump
+      state: "on"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Warning. The kitchen tank is full, but the pump is still running in manual mode."
+        sound: kitchen_full_manual
+        audio_duration: 10
+        visual_duration: 20
+
+# 3. KITCHEN: Semi-Auto Mode - Auto Stop on Full
+- id: 'kitchen_semiauto_stop'
+  alias: "Kitchen Semi-Auto - Stop on Full"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.top_tank_full_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.kitchen_pump_mode
+      state: "Semi-Auto"
+    - condition: state
+      entity_id: switch.kitchen_pump
+      state: "on"
+  action:
+    # Alert, then wait 10 seconds before stopping pump as requested
+    - service: script.system_alert
+      data:
+        message: "Kitchen tank is full. Auto stopping in 10 seconds."
+        sound: kitchen_stopping_soon
+        audio_duration: 6
+        visual_duration: 10
+    - delay: "00:00:10"
+    - service: switch.turn_off
+      target:
+        entity_id: switch.kitchen_pump
+
+# 4. KITCHEN: Full Auto Mode - Start on Empty
+- id: 'kitchen_auto_start'
+  alias: "Kitchen Full-Auto - Start on Empty"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.top_tank_empty_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.kitchen_pump_mode
+      state: "Full-Auto"
+    - condition: state
+      entity_id: switch.kitchen_pump
+      state: "off"
+    # Quiet hours check (Do not start if it's currently quiet hours)
+    - condition: not
+      conditions:
+        - condition: time
+          after: input_datetime.quiet_hours_start
+          before: input_datetime.quiet_hours_end
+    # INTERLOCK GUARD: never make it three pumps at once. Checked here as well
+    # as in the interlock automation so the motor is not started and then
+    # stopped a second later.
+    - condition: template
+      value_template: >
+        {{ ((1 if is_state('switch.bath_pump', 'on') else 0)
+          + (1 if is_state('switch.utility_pump', 'on') else 0)) < 2 }}
+    # Do not start into a dead mains
+    - condition: state
+      entity_id: binary_sensor.pump_mains_power
+      state: "on"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Kitchen tank is empty. Auto starting pump."
+        sound: kitchen_auto_start
+        audio_duration: 10
+        visual_duration: 20
+    - service: switch.turn_on
+      target:
+        entity_id: switch.kitchen_pump
+    - service: notify.notify
+      data:
+        message: "Kitchen pump auto-started (Tank Empty)"
+
+# 5. KITCHEN: Full Auto Mode - Stop on Full
+- id: 'kitchen_auto_stop'
+  alias: "Kitchen Full-Auto - Stop on Full"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.top_tank_full_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.kitchen_pump_mode
+      state: "Full-Auto"
+    - condition: state
+      entity_id: switch.kitchen_pump
+      state: "on"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Kitchen tank is full. Auto stopping pump."
+        sound: kitchen_auto_stop
+        audio_duration: 10
+        visual_duration: 20
+    - service: switch.turn_off
+      target:
+        entity_id: switch.kitchen_pump
+    - service: notify.notify
+      data:
+        message: "Kitchen pump auto-stopped (Tank Full)"
+
+
+# ==========================================
+# 🤖 BATH PUMP (BOTTOM TANK) AUTOMATIONS
+# ==========================================
+
+# 6. BATH: Manual & Semi-Auto - Tank Empty Alert
+- id: 'bath_empty_alert'
+  alias: "Bath Tank Empty Alert"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bottom_tank_empty_float
+      to: "on"
+  condition:
+    - condition: or
+      conditions:
+        - condition: state
+          entity_id: input_select.bath_pump_mode
+          state: "Manual"
+        - condition: state
+          entity_id: input_select.bath_pump_mode
+          state: "Semi-Auto"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Warning. The bath tank is empty."
+        sound: bath_empty
+        audio_duration: 10
+        visual_duration: 60
+
+# 7. BATH: Manual Mode - Tank Full Alert
+- id: 'bath_manual_full_alert'
+  alias: "Bath Tank Full Alert (Manual Mode)"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bottom_tank_full_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.bath_pump_mode
+      state: "Manual"
+    - condition: state
+      entity_id: switch.bath_pump
+      state: "on"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Warning. The bath tank is full, but the pump is still running in manual mode."
+        sound: bath_full_manual
+        audio_duration: 10
+        visual_duration: 20
+
+# 8. BATH: Semi-Auto Mode - Auto Stop on Full
+- id: 'bath_semiauto_stop'
+  alias: "Bath Semi-Auto - Stop on Full"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bottom_tank_full_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.bath_pump_mode
+      state: "Semi-Auto"
+    - condition: state
+      entity_id: switch.bath_pump
+      state: "on"
+  action:
+    # Alert, then wait 10 seconds before stopping pump as requested
+    - service: script.system_alert
+      data:
+        message: "Bath tank is filled. Auto stopping in 10 seconds."
+        sound: bath_stopping_soon
+        audio_duration: 6
+        visual_duration: 10
+    - delay: "00:00:10"
+    - service: switch.turn_off
+      target:
+        entity_id: switch.bath_pump
+
+# 9. BATH: Full Auto Mode - Start on Empty
+- id: 'bath_auto_start'
+  alias: "Bath Full-Auto - Start on Empty"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bottom_tank_empty_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.bath_pump_mode
+      state: "Full-Auto"
+    - condition: state
+      entity_id: switch.bath_pump
+      state: "off"
+    # Quiet hours check
+    - condition: not
+      conditions:
+        - condition: time
+          after: input_datetime.quiet_hours_start
+          before: input_datetime.quiet_hours_end
+    # INTERLOCK GUARD 1: the bath pump and the Utility pump may never run
+    # together, so do not auto-start the bath pump while Utility is on.
+    - condition: state
+      entity_id: switch.utility_pump
+      state: "off"
+    # INTERLOCK GUARD 2: never make it three pumps at once.
+    - condition: template
+      value_template: >
+        {{ ((1 if is_state('switch.kitchen_pump', 'on') else 0)
+          + (1 if is_state('switch.utility_pump', 'on') else 0)) < 2 }}
+    # Do not start into a dead mains
+    - condition: state
+      entity_id: binary_sensor.pump_mains_power
+      state: "on"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Bath tank is empty. Auto starting pump."
+        sound: bath_auto_start
+        audio_duration: 10
+        visual_duration: 20
+    - service: switch.turn_on
+      target:
+        entity_id: switch.bath_pump
+    - service: notify.notify
+      data:
+        message: "Bath pump auto-started (Tank Empty)"
+
+# 10. BATH: Full Auto Mode - Stop on Full
+- id: 'bath_auto_stop'
+  alias: "Bath Full-Auto - Stop on Full"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.bottom_tank_full_float
+      to: "on"
+  condition:
+    - condition: state
+      entity_id: input_select.bath_pump_mode
+      state: "Full-Auto"
+    - condition: state
+      entity_id: switch.bath_pump
+      state: "on"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Bath tank is full. Auto stopping pump."
+        sound: bath_auto_stop
+        audio_duration: 10
+        visual_duration: 20
+    - service: switch.turn_off
+      target:
+        entity_id: switch.bath_pump
+    - service: notify.notify
+      data:
+        message: "Bath pump auto-stopped (Tank Full)"
+
+
+# ==========================================
+# ✉️ WEEKLY REPORT - every Sunday morning
+# ==========================================
+
+# 17. Email a summary of the week, then reset the counters and start fresh.
+#
+# Deliberately sent AFTER a full week of data rather than at midnight, so it
+# lands at a time you will actually read it.
+- id: 'weekly_pump_report'
+  alias: "Report - Weekly Pump Summary (Monday)"
+  mode: single
+  # Moved from Sunday 09:00 to MONDAY 09:00 on 21-Aug-2026.
+  #
+  # The utility meters cycle at Monday 00:00. Reporting on Sunday meant
+  # emailing a week that had not finished yet, and racing the reset to catch
+  # the last hours. Reporting on Monday and reading `last_period` gives the
+  # complete Monday-to-Sunday week, exactly, with no race - it does not even
+  # matter if Home Assistant restarts over midnight.
+  trigger:
+    - platform: time
+      at: "09:00:00"
+  condition:
+    - condition: time
+      weekday:
+        - mon
+  action:
+    # SMTP is now a UI integration rather than a YAML notify platform, so this
+    # targets a notify ENTITY with notify.send_message instead of calling a
+    # named notify.<service>.
+    - action: notify.send_message
+      target:
+        entity_id: notify.email_report_target
+      data:
+        title: "Autoflow weekly report - {{ now().strftime('%d %b %Y') }}"
+        # NOTE the pipe character below, not ">".
+        #   >  folds every line break into a space - that is why the first
+        #      report arrived as one long run-on paragraph.
+        #   |  preserves line breaks and indentation exactly as written.
+        #
+        # Layout is deliberately narrow and vertical rather than wide columns,
+        # because plain-text email wraps at about 78 characters and wide tables
+        # break apart on a phone screen.
+        #
+        # HTML formatting needs smtp.send_message, which arrived in Home
+        # Assistant 2026.8. This system is on 2026.7.2 - once upgraded, this can
+        # become a properly formatted HTML table.
+        message: |
+          ===========================================
+             AUTOFLOW PUMP STATION - WEEKLY REPORT
+             Week ending {{ now().strftime('%d %B %Y') }}
+          ===========================================
+
+
+          RUNTIME - WEEK JUST ENDED
+          -------------------------------------------
+                       hours      kWh    kWh/h
+          {{ '%-9s' | format('Kitchen') }}{{ '%7.1f' | format(state_attr('sensor.kitchen_runtime_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(state_attr('sensor.kitchen_energy_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(
+               (state_attr('sensor.kitchen_energy_weekly', 'last_period') | float(0)) /
+               ([state_attr('sensor.kitchen_runtime_weekly', 'last_period') | float(0), 0.01] | max)) }}
+          {{ '%-9s' | format('Bath') }}{{ '%7.1f' | format(state_attr('sensor.bath_runtime_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(state_attr('sensor.bath_energy_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(
+               (state_attr('sensor.bath_energy_weekly', 'last_period') | float(0)) /
+               ([state_attr('sensor.bath_runtime_weekly', 'last_period') | float(0), 0.01] | max)) }}
+          {{ '%-9s' | format('Utility') }}{{ '%7.1f' | format(state_attr('sensor.utility_runtime_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(state_attr('sensor.utility_energy_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(
+               (state_attr('sensor.utility_energy_weekly', 'last_period') | float(0)) /
+               ([state_attr('sensor.utility_runtime_weekly', 'last_period') | float(0), 0.01] | max)) }}
+
+          kWh per hour is the one to watch. If a pump starts drawing
+          more energy for the same running time than it did last month,
+          it is working harder for the same water - a failing impeller,
+          a partly blocked line, or a dropping water table.
+
+
+          FILL TIMES (rolling 14 days)
+          -------------------------------------------
+          Kitchen
+              average : {{ states('sensor.kitchen_fill_time_average') }} min
+              longest : {{ states('sensor.kitchen_fill_time_longest') }} min
+              limit   : {{ states('input_number.kitchen_max_run_minutes') }} min
+
+          Bath
+              average : {{ states('sensor.bath_fill_time_average') }} min
+              longest : {{ states('sensor.bath_fill_time_longest') }} min
+              limit   : {{ states('input_number.bath_max_run_minutes') }} min
+
+          Utility
+              average : {{ states('sensor.utility_run_time_average') }} min
+              longest : {{ states('sensor.utility_run_time_longest') }} min
+              limit   : {{ states('input_number.utility_max_run_minutes') }} min
+
+          Set each limit to roughly 1.5x its LONGEST figure - not the
+          average. The limit is a flood backstop and must never fire
+          during a normal fill.
+
+
+          ENERGY THIS WEEK
+          -------------------------------------------
+              Kitchen : {{ states('sensor.kitchen_energy_weekly') }} kWh
+              Bath    : {{ states('sensor.bath_energy_weekly') }} kWh
+              Utility  : {{ states('sensor.utility_energy_weekly') }} kWh
+
+
+          SAFETY EVENTS THIS WEEK
+          -------------------------------------------
+              Dry run shutdowns   : {{ states('counter.dry_run_events') }}
+              Max runtime cutoffs : {{ states('counter.max_runtime_events') }}
+              Interlock blocks    : {{ states('counter.interlock_blocks') }}
+              Mains power cuts    : {{ states('counter.power_cut_events') }}
+
+          Any non-zero number here is worth a look. Dry run and max
+          runtime shutdowns in particular mean something is not
+          behaving as expected - a stuck float, a failing pump, or a
+          limit set too tight.
+
+
+          DRY RUN SETTINGS
+          -------------------------------------------
+              Kitchen : below {{ states('input_number.kitchen_dry_run_current') }} A for {{ states('input_number.kitchen_dry_run_seconds') }} s
+              Bath    : below {{ states('input_number.bath_dry_run_current') }} A for {{ states('input_number.bath_dry_run_seconds') }} s
+              Utility  : below {{ states('input_number.utility_dry_run_current') }} A for {{ states('input_number.utility_dry_run_seconds') }} s
+
+
+          SYSTEM
+          -------------------------------------------
+              Mains supply : {{ states('sensor.pump_power_status') }}
+              Generated    : {{ now().strftime('%d %b %Y at %H:%M') }}
+
+          ===========================================
+
+    # Start the next week from zero
+    - service: counter.reset
+      target:
+        entity_id:
+          - counter.dry_run_events
+          - counter.max_runtime_events
+          - counter.interlock_blocks
+          - counter.power_cut_events
+
+# ==========================================
+# 🔧 EXTERNAL / MANUAL START DETECTION
+# ==========================================
+
+# 19. A pump is drawing current but Home Assistant never switched it on.
+#
+# That means someone used the external manual switch. Worth announcing for two
+# reasons:
+#
+#   1. You may not know it is running - there is no dashboard state for it.
+#   2. It is running WITHOUT protection. The dry-run and max-runtime automations
+#      work by calling switch.turn_off, and that does nothing to a pump whose
+#      power is coming through the manual switch instead of the relay. Home
+#      Assistant can see the problem but cannot act on it.
+#
+# So this alerts, and keeps alerting every 30 minutes while it continues, rather
+# than pretending the pump is protected.
+- id: 'external_start_detected'
+  alias: "Alert - Pump Started Externally"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.kitchen_pump_external_start
+      to: "on"
+      id: kitchen
+    - platform: state
+      entity_id: binary_sensor.bath_pump_external_start
+      to: "on"
+      id: bath
+    - platform: state
+      entity_id: binary_sensor.utility_pump_external_start
+      to: "on"
+      id: utility
+    # Repeat reminder while it is still running unprotected
+    - platform: state
+      entity_id: binary_sensor.kitchen_pump_external_start
+      to: "on"
+      for: "00:30:00"
+      id: kitchen
+    - platform: state
+      entity_id: binary_sensor.bath_pump_external_start
+      to: "on"
+      for: "00:30:00"
+      id: bath
+    - platform: state
+      entity_id: binary_sensor.utility_pump_external_start
+      to: "on"
+      for: "00:30:00"
+      id: utility
+  variables:
+    pump_name: >
+      {{ {'kitchen': 'Kitchen pump',
+          'bath':    'Bath pump',
+          'utility': 'Utility pump'}[trigger.id] }}
+    current_sensor: >
+      {{ {'kitchen': 'sensor.pump_1_current',
+          'bath':    'sensor.pump_2_current',
+          'utility': 'sensor.pump_3_current'}[trigger.id] }}
+    pump_switch: "switch.{{ trigger.id }}_pump"
+  condition:
+    - condition: state
+      entity_id: input_boolean.mute_manual_warnings
+      state: "off"
+    # ADDED 17-Aug-2026. Current flowing while the switch reads off has two
+    # possible causes: somebody used the wall switch, or the relay failed to
+    # release after we commanded it off. This sensor cannot tell them apart,
+    # and it fires first (8s) - so without this it would blame the wall switch
+    # for what is actually a welded relay, and send you looking in the wrong
+    # place. If the switch was commanded off in the last 60 seconds, this stays
+    # quiet and 'stop_confirmation' reports it accurately at 20s.
+    - condition: template
+      value_template: >
+        {{ (now() - states[pump_switch].last_changed).total_seconds() > 60 }}
+  action:
+    - service: script.system_alert
+      data:
+        message: >
+          The {{ pump_name }} is running from the manual switch, drawing
+          {{ states(current_sensor) }} amps. Automatic protection is not
+          available while it is controlled manually.
+        sound: manual_mode_reminder
+        audio_duration: 12
+        visual_duration: 30
+    # Live stats card, same as a Home Assistant start would show
+    - service: script.pump_stats_popup
+      data:
+        pump: "{{ trigger.id }}"
+        reason: "Manual switch"
+    - service: notify.notify
+      data:
+        message: >
+          {{ pump_name }} started externally ({{ states(current_sensor) }}A).
+          Dry-run and max-runtime protection cannot stop a manually powered pump.
+
+# 25. Enclosure exhaust fan on relay 4.
+#
+# Moved from channel 8 to channel 4 on 16-Aug-2026 after GPIO 6 lost the
+# ability to pull low. This refers to switch.enclosure_fan rather than to a
+# channel number, so the next swap is a one-line change in
+# configuration.yaml and nothing here needs touching.
+#
+# Hysteresis, not a single threshold: the fan starts above "Fan On Above" and
+# stops below "Fan Off Below". With one threshold it would switch on and off
+# repeatedly while the temperature hovered on the line, which is hard on the
+# relay and audible.
+#
+# Polls once a minute rather than triggering on temperature crossings, so it
+# also self-corrects - if the fan is ever in the wrong state (after a restart,
+# or someone toggled relay 8 by hand) the next poll fixes it.
+- id: 'enclosure_fan_control'
+  alias: "Cooling - Enclosure Exhaust Fan"
+  mode: single
+  trigger:
+    - platform: time_pattern
+      minutes: "/1"
+  condition:
+    # Do nothing if the temperature reading is missing - better to leave the fan
+    # as it is than to act on a value we do not have.
+    - condition: template
+      value_template: >
+        {{ states('sensor.pi_temperature') not in
+           ['unknown', 'unavailable', 'none', ''] }}
+  action:
+    - variables:
+        temp: "{{ states('sensor.pi_temperature') | float(0) }}"
+        on_at: "{{ states('input_number.fan_on_temp') | float(60) }}"
+        off_at: "{{ states('input_number.fan_off_temp') | float(52) }}"
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ temp > on_at and is_state('switch.enclosure_fan', 'off') }}"
+          sequence:
+            - service: switch.turn_on
+              target:
+                entity_id: switch.enclosure_fan
+        - conditions:
+            - condition: template
+              value_template: "{{ temp < off_at and is_state('switch.enclosure_fan', 'on') }}"
+          sequence:
+            - service: switch.turn_off
+              target:
+                entity_id: switch.enclosure_fan
+
+# 26. Warn if the Pi is getting genuinely hot despite the fan.
+#
+# A Pi 5 throttles around 80C. If it is still climbing with the fan running,
+# something is wrong - fan failed, vent blocked, or ambient too high.
+- id: 'pi_overheat_warning'
+  alias: "Cooling - Pi Overheating"
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.pi_temperature
+      above: 75
+      for: "00:05:00"
+  action:
+    - service: script.system_alert
+      data:
+        message: >
+          Attention. The controller is running at
+          {{ states('sensor.pi_temperature') }} degrees with the fan
+          {{ 'running' if is_state('switch.enclosure_fan','on') else 'off' }}.
+          Please check the enclosure ventilation.
+        sound: attention
+        audio_duration: 10
+        visual_duration: 60
+    - service: notify.notify
+      data:
+        message: >
+          Pi at {{ states('sensor.pi_temperature') }}C for 5 minutes.
+          Fan is {{ states('switch.enclosure_fan') }}. Check ventilation.
+
+# 23. Speaker volume presets.
+#
+# The five fixed levels are easier to hit on a touchscreen than a continuous
+# slider, and they mean "quiet" and "loud" are always the same quiet and loud
+# rather than wherever your finger landed.
+- id: 'speaker_volume_preset'
+  alias: "Audio - Apply Speaker Volume Preset"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_select.speaker_volume
+    # ADDED 17-Aug-2026. Previously this only fired when you changed the
+    # setting, so after a restart MPD came up at whatever level it felt like
+    # and the widget confidently displayed something else. Reapplying on start
+    # keeps the number on screen and the actual volume in agreement.
+    - platform: homeassistant
+      event: start
+  action:
+    - service: media_player.volume_set
+      target:
+        entity_id: media_player.music_player_daemon
+      data:
+        # Reads the entity rather than trigger.to_state - the same action then
+        # works for the state trigger and the startup trigger, which has no
+        # to_state at all.
+        volume_level: >
+          {% set s = states('input_select.speaker_volume') %}
+          {% if s == 'Off' %}0
+          {% else %}{{ (s | replace('%','') | float(80)) / 100 }}{% endif %}
+
+# 29. Tank full while a pump is running -> announce, then stop after 20s.
+#
+# ONE automation replacing the previous pair. The old "refuse the start" and
+# "periodic backstop" did the same job in two places with two behaviours, which
+# is how they would eventually drift apart.
+#
+# THE BUG THIS FIXES: the original tank-full automations triggered on the float
+# going `to: "on"` - a TRANSITION. If the float was already on and you then
+# pressed START, no transition happened, nothing fired, and the pump ran into a
+# full tank. This asks "is a pump running into a full tank right now", which is
+# true in both cases.
+#
+# The 20 second grace is deliberate: the pump starts normally, you hear why it
+# is about to stop, and a float bouncing on a wave does not cause a shutdown.
+#
+# Kitchen and Bath only. The Utility pump feeds the sump and that plumbing is
+# still undecided, so it is left alone rather than guessed at.
+- id: 'tank_full_stop'
+  alias: "Safety - Stop Pump Running Into Full Tank"
+  mode: single
+  max_exceeded: silent
+  trigger:
+    # Fires the moment the combination becomes true - whether the tank filled
+    # while running, or the pump started into an already-full tank.
+    - platform: template
+      value_template: >
+        {{ is_state('switch.kitchen_pump','on')
+           and is_state('binary_sensor.top_tank_full_float','on') }}
+    - platform: template
+      value_template: >
+        {{ is_state('switch.bath_pump','on')
+           and is_state('binary_sensor.bottom_tank_full_float','on') }}
+    # Template triggers do not fire for a condition that was already true when
+    # Home Assistant started, so sweep as well.
+    - platform: time_pattern
+      minutes: "/2"
+    - platform: homeassistant
+      event: start
+  action:
+    - repeat:
+        for_each:
+          - {"pump": "switch.kitchen_pump",
+             "full": "binary_sensor.top_tank_full_float",
+             "name": "Kitchen", "sound": "kitchen_full_stopping"}
+          - {"pump": "switch.bath_pump",
+             "full": "binary_sensor.bottom_tank_full_float",
+             "name": "Bath", "sound": "bath_full_stopping"}
+        sequence:
+          - if:
+              - condition: template
+                value_template: >
+                  {{ is_state(repeat.item.pump, 'on')
+                     and is_state(repeat.item.full, 'on') }}
+            then:
+              - service: script.system_alert
+                data:
+                  message: >
+                    The {{ repeat.item.name | lower }} tank is already full.
+                    The pump is turning off in twenty seconds.
+                  sound: "{{ repeat.item.sound }}"
+                  audio_duration: 8
+                  visual_duration: 25
+              - delay: "00:00:20"
+              # Re-check after the wait. If the level dropped or you stopped it
+              # yourself, there is nothing left to do.
+              - if:
+                  - condition: template
+                    value_template: >
+                      {{ is_state(repeat.item.pump, 'on')
+                         and is_state(repeat.item.full, 'on') }}
+                then:
+                  - service: switch.turn_off
+                    target:
+                      entity_id: "{{ repeat.item.pump }}"
+                  - service: notify.notify
+                    data:
+                      message: >
+                        {{ repeat.item.name }} pump stopped - tank full.
+
+# 28. Screen brightness mode -> publish the awake level.
+#
+# Writes ONLY the "level when awake" value. screen_dim.py decides what actually
+# reaches the panel, so this never fights the idle dimmer.
+#
+# Auto re-evaluates every 5 minutes, which is how it steps down through the
+# evening without needing three separate time triggers.
+#
+#   Off   0%    -> 0
+#   Dim   10%   -> 26
+#   Full  100%  -> 255
+#   Auto  07:00-17:00  70%  -> 179
+#         17:00-22:00  20%  -> 51
+#         22:00-07:00   3%  -> 8
+- id: 'screen_brightness_mode'
+  alias: "Kiosk - Apply Screen Brightness Mode"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_select.screen_brightness
+    - platform: time_pattern
+      minutes: "/5"
+    - platform: homeassistant
+      event: start
+  action:
+    # Levels are 0-255 as the backlight expects, not percentages:
+    #   Dim   26 = 10%      Auto day     179 = 70%   (07:00-17:00)
+    #   Full 255 = 100%     Auto evening  51 = 20%   (17:00-22:00)
+    #   Off    0 = 0%       Auto night     8 = 3%    (22:00-07:00)
+    #
+    # Night dropped from 5% to 3% on 17-Aug-2026.
+    #
+    # 24-Aug-2026: evening starts an hour earlier (18:00 -> 17:00), night an
+    # hour earlier again (23:00 -> 22:00), and the daytime level came down a
+    # notch (80% -> 70%, 204 -> 179).
+    #
+    # Note this only decides how bright the panel is WHILE AWAKE -
+    # screen_dim.py blanks it to 0 after 30 seconds untouched. So the night
+    # figure is really "how bright when you wake it at three in the morning",
+    # not what it sits at all night.
+    - variables:
+        level: >
+          {% set mode = states('input_select.screen_brightness') %}
+          {% if mode == 'Off' %}0
+          {% elif mode == 'Dim' %}26
+          {% elif mode == 'Full' %}255
+          {% else %}
+            {% set h = now().hour %}
+            {% if h >= 7 and h < 17 %}179
+            {% elif h >= 17 and h < 22 %}51
+            {% else %}8{% endif %}
+          {% endif %}
+    - service: shell_command.set_awake_brightness
+      data:
+        level: "{{ level | trim | int(255) }}"
+
+# 27. On lock, send the kiosk to a dashboard that carries the lock card.
+#
+# A Lovelace card only exists while you are looking at its dashboard. Press
+# LOCK while viewing Settings and the card sitting on another dashboard has no
+# idea - the flag flips but nothing appears. That is why locking seemed to do
+# nothing until a reboot happened to land on a page that had the card.
+#
+# The card is now on every sections-based dashboard, but the CCTV views are
+# panel type and can only hold one card, so they cannot carry it. Navigating
+# on lock closes that hole regardless of where you were.
+# 27b. Drive the lock daemon.  ADDED 29-Aug-2026.
+#
+# This is what was missing. The toggle flipped, the kiosk navigated, and the
+# touchscreen stayed live - because nothing wrote screenlock_cmd.txt and
+# screenlock.service was disabled. The lock was decorative.
+#
+# screen_lock.py polls that file. On "lock" it blanks the panel and grabs the
+# touchscreen with EVIOCGRAB, so Chromium receives no touch events at all.
+# Unlocking needs a six-second finger hold on the panel itself - deliberately
+# not something a stray press can do.
+#
+# Auto-lock is off (IDLE_LOCK_SECONDS = 0). The daemon locks only when told to.
+- id: 'kiosk_lock_apply'
+  alias: "Kiosk - Apply Screen Lock"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_boolean.kiosk_locked
+  action:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.kiosk_locked
+              state: "on"
+          sequence:
+            - service: shell_command.screenlock_lock
+      default:
+        - service: shell_command.screenlock_unlock
+
+# 27c. Re-arm the blackout.  ADDED 29-Aug-2026.
+#
+# The lock has two stages: a six-second finger hold releases the touchscreen
+# and lights the panel, and the pattern card then has to be drawn before the
+# dashboard is reachable. input_boolean.kiosk_locked stays ON through both -
+# it is the overall "locked" flag, and only the pattern clears it.
+#
+# That leaves a gap: hold for six seconds, walk away, and the panel sits lit
+# and touch-enabled on the pattern screen indefinitely. Stage one has been
+# defeated and nothing puts it back.
+#
+# So if the daemon reports unlocked while the flag is still on, the blackout
+# is reimposed after a minute. A minute is long enough to draw a pattern
+# without being rushed, and short enough that an abandoned panel re-arms
+# itself.
+- id: 'kiosk_lock_rearm'
+  alias: "Kiosk - Re-arm Screen Lock If Pattern Not Drawn"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.kiosk_screen_locked
+      to: "off"
+      for: "00:01:00"
+  condition:
+    - condition: state
+      entity_id: input_boolean.kiosk_locked
+      state: "on"
+  action:
+    - service: shell_command.screenlock_lock
+
+- id: 'kiosk_lock_navigate'
+  alias: "Kiosk - Show Lock Screen On Lock"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_boolean.kiosk_locked
+      to: "on"
+  action:
+    - service: browser_mod.navigate
+      data:
+        path: /water-system-pump/water
+
+# 24. Idle dimming toggle -> tell the daemon.
+#
+# The daemon polls idle_dim.txt rather than being restarted, so switching this
+# takes effect within half a second and never interrupts anything.
+- id: 'idle_dim_toggle'
+  alias: "Kiosk - Apply Idle Dimming Setting"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: input_boolean.idle_dim_enabled
+    - platform: homeassistant
+      event: start
+  action:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.idle_dim_enabled
+              state: "on"
+          sequence:
+            - service: shell_command.idle_dim_on
+      default:
+        - service: shell_command.idle_dim_off
+
+# 22. Clear the mute automatically once no pump is on the manual override.
+#
+# The mute is for silencing an incident you already know about. It must not
+# survive that incident, or it would quietly disable the warnings for the next
+# one - which is exactly the failure this whole project keeps running into.
+- id: 'clear_manual_mute'
+  alias: "Housekeeping - Clear Manual Mute When Pumps Stop"
+  mode: single
+  trigger:
+    - platform: template
+      value_template: >
+        {{ is_state('binary_sensor.kitchen_pump_external_start', 'off')
+           and is_state('binary_sensor.bath_pump_external_start', 'off')
+           and is_state('binary_sensor.utility_pump_external_start', 'off') }}
+      for: "00:02:00"
+  condition:
+    - condition: state
+      entity_id: input_boolean.mute_manual_warnings
+      state: "on"
+  action:
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.mute_manual_warnings
+
+# 21. TANK FULL while the pump is on the manual override.
+#
+# The three existing tank-full automations all condition on the relay switch
+# being on. A pump started from the external switch leaves that showing 'off',
+# so none of them fired - the tank would fill, the float would trip, and nothing
+# would be said while it overflowed.
+#
+# This covers that case regardless of which mode the pump is in, because the
+# mode selector is irrelevant when the relay is being bypassed.
+#
+# It repeats every two minutes rather than announcing once. An overflowing tank
+# is not a "mentioned it, job done" situation, and Home Assistant cannot stop it.
+- id: 'tank_full_external_running'
+  alias: "Alert - Tank Full While Pump On Manual Switch"
+  mode: parallel
+  max: 4
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.top_tank_full_float
+      to: "on"
+      id: kitchen
+    - platform: state
+      entity_id: binary_sensor.bottom_tank_full_float
+      to: "on"
+      id: bath
+    # Keep nagging while both conditions persist
+    - platform: time_pattern
+      minutes: "/2"
+      id: recheck
+  variables:
+    pairs: >
+      {{ [{'tank': 'binary_sensor.top_tank_full_float',
+           'ext':  'binary_sensor.kitchen_pump_external_start',
+           'name': 'Kitchen',
+           'sound': 'kitchen_full_manual'},
+          {'tank': 'binary_sensor.bottom_tank_full_float',
+           'ext':  'binary_sensor.bath_pump_external_start',
+           'name': 'Bath',
+           'sound': 'bath_full_manual'}] }}
+  condition:
+    - condition: state
+      entity_id: input_boolean.mute_manual_warnings
+      state: "off"
+  action:
+    - repeat:
+        for_each: "{{ pairs }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: >
+                  {{ is_state(repeat.item.tank, 'on')
+                     and is_state(repeat.item.ext, 'on') }}
+            then:
+              - service: script.system_alert
+                data:
+                  message: >
+                    Warning. The {{ repeat.item.name | lower }} tank is full and
+                    the pump is running on the manual switch. It will not stop
+                    by itself. Please switch it off.
+                  sound: "{{ repeat.item.sound }}"
+                  audio_duration: 12
+                  visual_duration: 60
+              - service: notify.notify
+                data:
+                  message: >
+                    OVERFLOW RISK: {{ repeat.item.name }} tank full, pump running
+                    on manual switch. Home Assistant cannot stop it.
+
+# 20. Safety warnings for pumps running on the manual override.
+#
+# The external switch bypasses the relay and the SSR entirely, so Home Assistant
+# cannot cut power. What it CAN do is notice the same two dangerous conditions
+# and say so loudly, because in manual mode you are the shutdown mechanism.
+#
+# Deliberately alert-only. Calling switch.turn_off here would be worse than
+# useless - it would appear to have handled the problem while the motor kept
+# running.
+- id: 'manual_mode_safety_warnings'
+  alias: "Alert - Manual Mode Dry Run / Overrun"
+  mode: parallel
+  max: 6
+  trigger:
+    # Current collapsed while running on manual = probably dry
+    - platform: numeric_state
+      entity_id: sensor.pump_1_current
+      above: 0.3
+      below: input_number.kitchen_dry_run_current
+      for: "00:00:20"
+      id: dry_kitchen
+    - platform: numeric_state
+      entity_id: sensor.pump_2_current
+      above: 0.3
+      below: input_number.bath_dry_run_current
+      for: "00:00:20"
+      id: dry_bath
+    - platform: numeric_state
+      entity_id: sensor.pump_3_current
+      above: 0.3
+      below: input_number.utility_dry_run_current
+      for: "00:00:20"
+      id: dry_utility
+    # Still running on manual well past the configured limit
+    - platform: state
+      entity_id: binary_sensor.kitchen_pump_external_start
+      to: "on"
+      for: "01:30:00"
+      id: over_kitchen
+    - platform: state
+      entity_id: binary_sensor.bath_pump_external_start
+      to: "on"
+      for: "01:30:00"
+      id: over_bath
+    - platform: state
+      entity_id: binary_sensor.utility_pump_external_start
+      to: "on"
+      for: "01:30:00"
+      id: over_utility
+  variables:
+    kind: "{{ trigger.id.split('_')[0] }}"
+    pump_key: "{{ trigger.id.split('_')[1] }}"
+    pump_name: >
+      {{ {'kitchen': 'Kitchen pump',
+          'bath':    'Bath pump',
+          'utility': 'Utility pump'}[trigger.id.split('_')[1]] }}
+    external_sensor: >
+      binary_sensor.{{ trigger.id.split('_')[1] }}_pump_external_start
+  condition:
+    # Only when it is genuinely on the manual override. If the relay is on,
+    # the normal automations handle it and can actually stop the pump.
+    - condition: template
+      value_template: "{{ is_state(external_sensor, 'on') }}"
+  action:
+    - service: script.system_alert
+      data:
+        message: >
+          {% if kind == 'dry' %}
+            Warning. The {{ pump_name }} appears to be running dry on the manual
+            switch. Automatic shutdown is not possible. Please switch it off.
+          {% else %}
+            Warning. The {{ pump_name }} has been running on the manual switch
+            for over ninety minutes. Automatic shutdown is not possible.
+          {% endif %}
+        sound: "{{ 'dry_run_generic' if kind == 'dry' else 'maxrun_generic' }}"
+        audio_duration: 12
+        visual_duration: 60
+    - service: notify.notify
+      data:
+        message: >
+          MANUAL MODE: {{ pump_name }} -
+          {% if kind == 'dry' %}running dry{% else %}exceeded 90 minutes{% endif %}.
+          Home Assistant cannot stop it - switch it off by hand.
+
+# ==========================================
+# ⚡ FAST POLL ON PUMP START
+# ==========================================
+
+# 18. Force immediate Modbus reads for the first 15 seconds after a pump starts.
+#
+# The PZEM sensors poll on a fixed schedule (5s for current and power). That is
+# fine while running, but it means switching a pump on leaves the dashboard
+# showing stale zeros until the next scheduled read comes round.
+#
+# homeassistant.update_entity forces a poll immediately, outside the schedule.
+# Calling it once a second for 15 seconds gives an effectively live reading
+# during the moment you actually care - startup - then everything returns to the
+# normal interval with no extra load for the rest of the run.
+#
+# This also sharpens the dry-run detection window, since the 30 second settle
+# guard now has real data behind it rather than one or two samples.
+- id: 'fast_poll_on_pump_start'
+  alias: "Telemetry - Fast Poll After Pump Start"
+  mode: parallel
+  max: 3
+  max_exceeded: silent
+  trigger:
+    # Commanded from Home Assistant
+    - platform: state
+      entity_id: switch.kitchen_pump
+      to: "on"
+      id: kitchen
+    - platform: state
+      entity_id: switch.bath_pump
+      to: "on"
+      id: bath
+    - platform: state
+      entity_id: switch.utility_pump
+      to: "on"
+      id: utility
+    # Started by any other means - the external manual switch. Detected from
+    # current draw rather than the relay, so it fires either way.
+    - platform: numeric_state
+      entity_id: sensor.pump_1_current
+      above: 0.3
+      id: kitchen
+    - platform: numeric_state
+      entity_id: sensor.pump_2_current
+      above: 0.3
+      id: bath
+    - platform: numeric_state
+      entity_id: sensor.pump_3_current
+      above: 0.3
+      id: utility
+  variables:
+    # Comma-separated rather than a list - a templated list renders as a string
+    # and would not parse as entity IDs.
+    poll_targets: >
+      {{ {'kitchen': 'sensor.pump_1_current,sensor.pump_1_power,sensor.pump_1_voltage',
+          'bath':    'sensor.pump_2_current,sensor.pump_2_power,sensor.pump_2_voltage',
+          'utility': 'sensor.pump_3_current,sensor.pump_3_power,sensor.pump_3_voltage'
+         }[trigger.id] }}
+  action:
+    - repeat:
+        count: 15
+        sequence:
+          - service: homeassistant.update_entity
+            target:
+              entity_id: "{{ poll_targets }}"
+          - delay:
+              seconds: 1
+
+# ==========================================
+# 📊 OBSERVATION - MEASURING REAL FILL TIMES
+# ==========================================
+
+# 16. Record how long each pump actually ran.
+#
+# Written every time a pump stops, for any reason. Feeds the statistics sensors
+# in configuration.yaml, which give the average and longest fill over 14 days.
+# Once a couple of weeks of normal fill/drain cycles have accumulated, set the
+# Max Run Time Limit to roughly 1.5x the LONGEST figure.
+#
+# Runs shorter than 30 seconds are ignored - those are test toggles and blocked
+# starts, not real fills, and they would drag the average down.
+- id: 'log_pump_run_duration'
+  alias: "Observation - Log Pump Run Duration"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: state
+      entity_id: switch.kitchen_pump
+      from: "on"
+      to: "off"
+      id: kitchen
+    - platform: state
+      entity_id: switch.bath_pump
+      from: "on"
+      to: "off"
+      id: bath
+    - platform: state
+      entity_id: switch.utility_pump
+      from: "on"
+      to: "off"
+      id: utility
+  variables:
+    helper: >
+      {{ {'kitchen': 'input_number.kitchen_last_run_minutes',
+          'bath':    'input_number.bath_last_run_minutes',
+          'utility':  'input_number.utility_last_run_minutes'}[trigger.id] }}
+    pump_name: >
+      {{ {'kitchen': 'Kitchen pump',
+          'bath':    'Bath pump',
+          'utility':  'Utility pump'}[trigger.id] }}
+    ran_minutes: >
+      {{ ((as_timestamp(trigger.to_state.last_changed)
+         - as_timestamp(trigger.from_state.last_changed)) / 60) | round(1) }}
+  condition:
+    - condition: template
+      value_template: "{{ ran_minutes | float(0) >= 0.5 }}"
+  action:
+    - service: input_number.set_value
+      target:
+        entity_id: "{{ helper }}"
+      data:
+        # Clamped to the helper's 240 minute ceiling
+        value: "{{ [ran_minutes | float(0), 240] | min }}"
+    - service: logbook.log
+      data:
+        name: "Fill cycle"
+        message: "{{ pump_name }} ran for {{ ran_minutes }} minutes."
+        entity_id: "{{ trigger.entity_id }}"
+
+# ==========================================
+# 🔌 MAINS POWER MONITORING
+# ==========================================
+
+# 13. Mains power cut detected
+- id: 'mains_power_cut'
+  alias: "Power - Mains Cut Detected"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.pump_mains_power
+      to: "off"
+  action:
+    - service: script.system_alert
+      data:
+        message: >
+          Attention. Mains power to the pumps has failed.
+          No pump can run until power returns.
+        sound: power_cut
+        audio_duration: 10
+        visual_duration: 60
+    - service: notify.notify
+      data:
+        message: "POWER CUT: mains supply to the pumps has failed."
+    - service: counter.increment
+      target:
+        entity_id: counter.power_cut_events
+
+# 14. Mains power restored
+- id: 'mains_power_restored'
+  alias: "Power - Mains Restored"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.pump_mains_power
+      to: "on"
+      from: "off"
+  action:
+    - service: script.system_alert
+      data:
+        message: "Mains power to the pumps has been restored."
+        sound: power_restored
+        audio_duration: 8
+        visual_duration: 20
+    - service: notify.notify
+      data:
+        message: >
+          POWER RESTORED: pump supply is back at
+          {{ states('sensor.pump_supply_voltage') }}V.
+
+# ==========================================
+# 🔗 PUMP COMBINATION INTERLOCK
+# ==========================================
+
+# 15. Hard limits on which pumps may run together.
+#
+#   Rule 1: never more than two pumps at once.
+#   Rule 2: the Bath pump and the Utility pump may never run together.
+#
+# This is the backstop that catches manual switching from the dashboard, the
+# kiosk, or Google Assistant. The auto-start automations have matching guard
+# conditions so that in normal automatic operation a pump is never switched on
+# and then immediately off again - starting a motor only to stop it a second
+# later is hard on both the motor and the SSR.
+- id: 'pump_interlock'
+  alias: "Interlock - Pump Combination Rules"
+  mode: queued
+  max: 5
+  trigger:
+    - platform: state
+      entity_id:
+        - switch.kitchen_pump
+        - switch.bath_pump
+        - switch.utility_pump
+      to: "on"
+  variables:
+    started_name: >
+      {{ state_attr(trigger.entity_id, 'friendly_name')
+         | default(trigger.entity_id, true) }}
+    on_count: >
+      {{ (1 if is_state('switch.kitchen_pump', 'on') else 0)
+       + (1 if is_state('switch.bath_pump', 'on') else 0)
+       + (1 if is_state('switch.utility_pump', 'on') else 0) }}
+    bath_utility_clash: >
+      {{ is_state('switch.bath_pump', 'on')
+         and is_state('switch.utility_pump', 'on') }}
+  condition:
+    - condition: template
+      value_template: >
+        {{ bath_utility_clash or (on_count | int(0) > 2) }}
+  action:
+    # Stop the pump that was just started - the ones already running are left alone
+    - service: switch.turn_off
+      target:
+        entity_id: "{{ trigger.entity_id }}"
+    - service: script.system_alert
+      data:
+        message: >
+          {% if bath_utility_clash %}
+            Not allowed. The bath pump and the Utility pump cannot run at the
+            same time. {{ started_name }} has been stopped.
+          {% else %}
+            Not allowed. Only two pumps may run at once. {{ started_name }} has
+            been stopped.
+          {% endif %}
+        sound: "{{ 'interlock_bath_utility' if bath_utility_clash else 'interlock_two_pump_limit' }}"
+        audio_duration: 12
+        visual_duration: 30
+    - service: notify.notify
+      data:
+        message: >
+          BLOCKED: {{ started_name }} was stopped -
+          {% if bath_utility_clash %}bath and Utility cannot run together.
+          {% else %}two-pump limit reached.{% endif %}
+    - service: counter.increment
+      target:
+        entity_id: counter.interlock_blocks
+
+# ==========================================
+# 🛑 UTILITY PUMP & DRY RUN PROTECTION
+# ==========================================
+
+# 11. DRY RUN PROTECTION - ALL THREE PUMPS
+#
+# REWRITTEN. Previously this existed for the Utility pump only, so the Kitchen
+# and Bath pumps had no dry-run protection at all. This one covers all three.
+#
+# Two guards were added:
+#
+#   - MAINS GUARD: the PZEM is powered from the line it measures, so a mains
+#     failure makes current read low or unavailable, which looks identical to a
+#     dry pump. Requiring voltage above 100V means a power cut no longer produces
+#     a false "dry run" alarm.
+#
+#   - STALE SENSOR GUARD: after power is restored the sensor goes from
+#     'unavailable' straight to 0A, which HA treats as crossing the threshold and
+#     would fire this automation spuriously. Checking that the previous reading
+#     was a real number suppresses that.
+- id: 'dry_run_protection_all'
+  alias: "Safety - Dry Run Shutdown (All Pumps)"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.pump_1_current
+      above: 0.3
+      below: input_number.kitchen_dry_run_current
+      id: kitchen
+    - platform: numeric_state
+      entity_id: sensor.pump_2_current
+      above: 0.3
+      below: input_number.bath_dry_run_current
+      id: bath
+    - platform: numeric_state
+      entity_id: sensor.pump_3_current
+      above: 0.3
+      below: input_number.utility_dry_run_current
+      id: utility
+  variables:
+    limit_helper: >
+      {{ {'kitchen': 'input_number.kitchen_dry_run_current',
+          'bath':    'input_number.bath_dry_run_current',
+          'utility':  'input_number.utility_dry_run_current'}[trigger.id] }}
+    wait_helper: >
+      {{ {'kitchen': 'input_number.kitchen_dry_run_seconds',
+          'bath':    'input_number.bath_dry_run_seconds',
+          'utility':  'input_number.utility_dry_run_seconds'}[trigger.id] }}
+    pump_switch: >
+      {{ {'kitchen': 'switch.kitchen_pump',
+          'bath':    'switch.bath_pump',
+          'utility':  'switch.utility_pump'}[trigger.id] }}
+    current_sensor: >
+      {{ {'kitchen': 'sensor.pump_1_current',
+          'bath':    'sensor.pump_2_current',
+          'utility':  'sensor.pump_3_current'}[trigger.id] }}
+    voltage_sensor: >
+      {{ {'kitchen': 'sensor.pump_1_voltage',
+          'bath':    'sensor.pump_2_voltage',
+          'utility':  'sensor.pump_3_voltage'}[trigger.id] }}
+    pump_name: >
+      {{ {'kitchen': 'Kitchen pump',
+          'bath':    'Bath pump',
+          'utility':  'Utility pump'}[trigger.id] }}
+  condition:
+    # Only act if we believe the pump is actually running
+    - condition: template
+      value_template: "{{ is_state(pump_switch, 'on') }}"
+    # Mains guard - ignore if the line is dead (that is a power cut, not a dry run)
+    - condition: template
+      value_template: "{{ states(voltage_sensor) | float(0) > 100 }}"
+    # Stale sensor guard - previous reading must have been a real number
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state not in ['unknown', 'unavailable'] }}
+    # SETTLE GUARD - ignore the first 30 seconds after a pump starts. A pump
+    # that is priming, or drawing inrush and then settling, passes through a
+    # low-current phase that is not a dry run. This matters most while the
+    # correct thresholds are still being observed.
+    - condition: template
+      value_template: >
+        {% set s = states[pump_switch] %}
+        {{ s is not none and (now() - s.last_changed).total_seconds() > 30 }}
+  action:
+    # Wait out this pump's own settle time so a brief dip is not treated as dry
+    - delay:
+        seconds: "{{ states(wait_helper) | float(15) | int }}"
+    # Re-check everything after the wait before doing anything drastic
+    - condition: template
+      value_template: "{{ is_state(pump_switch, 'on') }}"
+    - condition: template
+      value_template: >
+        {{ states(current_sensor) | float(999)
+           < states(limit_helper) | float(3) }}
+    # LOWER BOUND. A pump running dry still draws roughly half its wet current.
+    # A pump that has been switched OFF draws nothing - and without this check,
+    # switching off looked exactly like a dry run, because both show "current
+    # dropped below the threshold".
+    - condition: template
+      value_template: "{{ states(current_sensor) | float(0) > 0.3 }}"
+    - condition: template
+      value_template: "{{ states(voltage_sensor) | float(0) > 100 }}"
+    - service: script.system_alert
+      data:
+        message: >
+          Critical warning. Dry run detected on the {{ pump_name }}.
+          Stopping now to prevent motor damage.
+        sound: "dry_run_{{ trigger.id }}"
+        audio_duration: 10
+        visual_duration: 60
+    - service: switch.turn_off
+      target:
+        entity_id: "{{ pump_switch }}"
+    - service: notify.notify
+      data:
+        message: >
+          CRITICAL: {{ pump_name }} shut down due to dry run
+          ({{ states(current_sensor) }}A).
+    - service: counter.increment
+      target:
+        entity_id: counter.dry_run_events
+
+# 12. GLOBAL DEADMAN SWITCH (Maximum Run Time Override)
+#
+# REWRITTEN. Two problems with the previous version:
+#   1. It shut down ALL THREE pumps whenever any one of them exceeded the limit,
+#      so a bath pump that started 30 seconds ago was killed because the kitchen
+#      pump hit 90 minutes. It now stops only the offending pump.
+#   2. It used a template inside the trigger's `for:` clause. Trigger templates
+#      are rendered once when the automation loads, so moving the "Max Run Time
+#      Limit" slider in the UI had no effect until a restart or reload - the
+#      slider was decorative. This version checks the slider at evaluation time,
+#      so changes take effect immediately.
+#
+# It now polls once a minute and measures how long each pump has actually been
+# on, which also means a pump that was already running when the automation
+# reloaded is still covered.
+- id: 'max_run_time_safety'
+  alias: "Global Safety - Max Run Time Exceeded"
+  mode: single
+  max_exceeded: silent
+  trigger:
+    - platform: time_pattern
+      minutes: "/1"
+  action:
+    - repeat:
+        for_each:
+          - switch.kitchen_pump
+          - switch.bath_pump
+          - switch.utility_pump
+        sequence:
+          - variables:
+              pump_name: >
+                {{ state_attr(repeat.item, 'friendly_name') | default(repeat.item, true) }}
+              # Each pump has its own limit - a 0.5 HP kitchen pump filling a
+              # small tank and a 1.5 HP Utility pump are not comparable.
+              limit_helper: >
+                {{ {'switch.kitchen_pump':  'input_number.kitchen_max_run_minutes',
+                    'switch.bath_pump':     'input_number.bath_max_run_minutes',
+                    'switch.utility_pump': 'input_number.utility_max_run_minutes'
+                   }[repeat.item] }}
+              run_minutes: >
+                {% set s = states[repeat.item] %}
+                {% if s is not none and s.state == 'on' %}
+                  {{ ((now() - s.last_changed).total_seconds() / 60) | round(1) }}
+                {% else %}0{% endif %}
+          - if:
+              - condition: template
+                value_template: >
+                  {{ run_minutes | float(0)
+                     > states(limit_helper) | float(120) }}
+            then:
+              - service: script.system_alert
+                data:
+                  message: >
+                    Emergency alert. The {{ pump_name }} has exceeded the maximum
+                    run time limit. Shutting it down now.
+                  sound: >-
+                    {{ {'switch.kitchen_pump':  'maxrun_kitchen',
+                        'switch.bath_pump':     'maxrun_bath',
+                        'switch.utility_pump':  'maxrun_utility'}[repeat.item] }}
+                  audio_duration: 15
+                  visual_duration: 60
+              - service: switch.turn_off
+                target:
+                  entity_id: "{{ repeat.item }}"
+              - service: notify.notify
+                data:
+                  message: >
+                    CRITICAL: {{ pump_name }} exceeded max run time
+                    ({{ run_minutes }} min) and was forced OFF.
+              - service: counter.increment
+                target:
+                  entity_id: counter.max_runtime_events
+
+# ==========================================
+# 🛡️  FAIL-SAFE LAYER - added 17-Aug-2026
+# ==========================================
+#
+# THE FAILURE THIS ANSWERS
+#
+# On 17-Aug the USB serial converter re-enumerated. The Modbus connection to
+# all three PZEM meters died, and with it: dry-run protection, max run time,
+# the tank-full backstop and external-start detection. Every one of them reads
+# current or voltage. None of them announced that it had stopped working.
+#
+# Meanwhile the pumps still started perfectly happily on demand.
+#
+# The rule these five automations enforce is: A PUMP MAY ONLY RUN WHILE IT IS
+# BEING MEASURED. Losing the ability to measure is itself an event worth
+# acting on, not a quiet return to no protection.
+
+# 31. Refuse to start a pump whose meter is not reporting.
+#
+# Without current we cannot tell running from stopped, wet from dry, or
+# working from seized. Starting anyway would be running a motor blind.
+- id: 'refuse_start_no_telemetry'
+  alias: "Fail-safe - Refuse Start Without Telemetry"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: state
+      entity_id: switch.kitchen_pump
+      to: "on"
+      id: kitchen
+    - platform: state
+      entity_id: switch.bath_pump
+      to: "on"
+      id: bath
+    - platform: state
+      entity_id: switch.utility_pump
+      to: "on"
+      id: utility
+  variables:
+    name: "{{ trigger.id }}"
+    ok: "binary_sensor.{{ trigger.id }}_telemetry_ok"
+  condition:
+    - condition: template
+      value_template: "{{ is_state(ok, 'off') }}"
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: "{{ trigger.entity_id }}"
+    - service: script.system_alert
+      data:
+        message: >
+          The {{ name }} meter is not responding. The pump cannot start
+          without monitoring.
+        sound: "{{ name }}_no_telemetry"
+        audio_duration: 9
+        visual_duration: 30
+
+# 32. Meter dies while a pump is running -> say so, loudly and immediately.
+#
+# The pump is NOT stopped here. Interrupting a fill because a USB port
+# hiccuped would be its own kind of unreliable. But it is now running with no
+# dry-run protection, and that must not pass unnoticed - see 33 for the limit.
+- id: 'telemetry_lost_alert'
+  alias: "Fail-safe - Telemetry Lost While Running"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.kitchen_telemetry_ok
+      to: "off"
+      id: kitchen
+    - platform: state
+      entity_id: binary_sensor.bath_telemetry_ok
+      to: "off"
+      id: bath
+    - platform: state
+      entity_id: binary_sensor.utility_telemetry_ok
+      to: "off"
+      id: utility
+  variables:
+    name: "{{ trigger.id }}"
+    pump: "switch.{{ trigger.id }}_pump"
+  condition:
+    - condition: template
+      value_template: "{{ is_state(pump, 'on') }}"
+  action:
+    - service: script.system_alert
+      data:
+        message: >
+          Meter failure. The {{ name }} pump is running without monitoring
+          and will stop in ten minutes.
+        sound: "{{ name }}_telemetry_lost"
+        audio_duration: 10
+        visual_duration: 60
+    - service: notify.notify
+      data:
+        message: >
+          {{ name | title }} pump running WITHOUT telemetry. Hard 10 minute
+          limit now applies.
+
+# 33. Hard cap once a pump has run ten minutes unmonitored.
+#
+# A time limit is a poor substitute for measuring current, but it is a real
+# limit rather than none. State-based with `for:`, not a delay inside
+# automation 32 - a delay would be lost on a Home Assistant restart, which is
+# exactly when this is most likely to be needed.
+- id: 'telemetry_lost_cap'
+  alias: "Fail-safe - Stop Unmonitored Pump After 10 Minutes"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.kitchen_telemetry_ok
+      to: "off"
+      for: "00:10:00"
+      id: kitchen
+    - platform: state
+      entity_id: binary_sensor.bath_telemetry_ok
+      to: "off"
+      for: "00:10:00"
+      id: bath
+    - platform: state
+      entity_id: binary_sensor.utility_telemetry_ok
+      to: "off"
+      for: "00:10:00"
+      id: utility
+  variables:
+    name: "{{ trigger.id }}"
+    pump: "switch.{{ trigger.id }}_pump"
+  condition:
+    - condition: template
+      value_template: "{{ is_state(pump, 'on') }}"
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: "{{ pump }}"
+    - service: script.system_alert
+      data:
+        message: >
+          Stopping the {{ name }} pump. It has run for ten minutes without
+          monitoring.
+        sound: "{{ name }}_telemetry_stop"
+        audio_duration: 9
+        visual_duration: 60
+    - service: notify.notify
+      data:
+        message: "{{ name | title }} pump stopped - 10 min unmonitored limit reached."
+
+# 34. Confirm the pump actually started.
+#
+# Commanding a relay on proves nothing. Relays 5, 7 and 8 on this very board
+# accept the command, report success and do nothing, because the GPIO can no
+# longer pull the line low. The same silence would follow a tripped breaker, a
+# seized motor or a blown fuse.
+#
+# Fifteen seconds is comfortably longer than the start transient, and
+# <pump>_pump_running is already "current above 0.3 A", so this reuses the
+# existing definition of running rather than inventing a second one.
+- id: 'start_confirmation'
+  alias: "Fail-safe - Confirm Pump Actually Started"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: state
+      entity_id: switch.kitchen_pump
+      to: "on"
+      id: kitchen
+    - platform: state
+      entity_id: switch.bath_pump
+      to: "on"
+      id: bath
+    - platform: state
+      entity_id: switch.utility_pump
+      to: "on"
+      id: utility
+  variables:
+    name: "{{ trigger.id }}"
+    pump: "switch.{{ trigger.id }}_pump"
+    running: "binary_sensor.{{ trigger.id }}_pump_running"
+    ok: "binary_sensor.{{ trigger.id }}_telemetry_ok"
+  condition:
+    # Only meaningful while the meter works. A dead meter is automation 31's
+    # problem and must not be reported here as a dead pump.
+    - condition: template
+      value_template: "{{ is_state(ok, 'on') }}"
+  action:
+    - delay: "00:00:15"
+    - condition: template
+      value_template: "{{ is_state(pump, 'on') and is_state(running, 'off') }}"
+    - service: switch.turn_off
+      target:
+        entity_id: "{{ pump }}"
+    - service: script.system_alert
+      data:
+        message: >
+          The {{ name }} pump did not start. Check the relay and the breaker.
+        sound: "{{ name }}_no_start"
+        audio_duration: 9
+        visual_duration: 60
+    - service: notify.notify
+      data:
+        message: >
+          {{ name | title }} pump was commanded ON but drew no current for 15
+          seconds. Relay, breaker or motor.
+
+# 35. Confirm the pump actually stopped.
+#
+# Current still flowing after a commanded stop means welded relay contacts or
+# the wall switch. Either way the motor is running and the app cannot stop it,
+# which is the most dangerous state this system can be in.
+- id: 'stop_confirmation'
+  alias: "Fail-safe - Confirm Pump Actually Stopped"
+  mode: parallel
+  max: 3
+  trigger:
+    - platform: state
+      entity_id: switch.kitchen_pump
+      to: "off"
+      id: kitchen
+    - platform: state
+      entity_id: switch.bath_pump
+      to: "off"
+      id: bath
+    - platform: state
+      entity_id: switch.utility_pump
+      to: "off"
+      id: utility
+  variables:
+    name: "{{ trigger.id }}"
+    pump: "switch.{{ trigger.id }}_pump"
+    running: "binary_sensor.{{ trigger.id }}_pump_running"
+    ok: "binary_sensor.{{ trigger.id }}_telemetry_ok"
+  condition:
+    - condition: template
+      value_template: "{{ is_state(ok, 'on') }}"
+  action:
+    # 20s, comfortably past <pump>_pump_running's 10s delay_off, so a normal
+    # stop has had every chance to register before this complains.
+    - delay: "00:00:20"
+    - condition: template
+      value_template: "{{ is_state(pump, 'off') and is_state(running, 'on') }}"
+    - service: script.system_alert
+      data:
+        message: >
+          Warning. The {{ name }} pump did not stop. Check the relay or the
+          wall switch.
+        sound: "{{ name }}_no_stop"
+        audio_duration: 10
+        visual_duration: 120
+    - service: notify.notify
+      data:
+        message: >
+          {{ name | title }} pump still drawing current 20s after being
+          switched OFF. Welded relay or wall switch.
+
+# 36. Vehicle detected by the DVR -> mirror what the DVR does, on the kiosk.
+#
+# The DVR already buzzes and goes fullscreen on its own monitor. This does the
+# same on the wall panel: wake, chime, speak, jump to the camera, come back.
+#
+# HOW THE EVENT GETS HERE
+#
+# The DVR pushes to its "Alarm Host" (Network -> More Settings), set to
+# <DVR_INTERFACE_IP>:7200 - the Pi. dvr_alarm.py listens there and calls this webhook.
+#
+# WHY THE CAMERA IS HARDCODED
+#
+# The alarm payload does not say which channel fired. It was captured and
+# decoded on 18-Aug-2026: a message reporting four simultaneous alarms contains
+# four byte-for-byte IDENTICAL records. The channel simply is not in there.
+#
+# It works because the AcuSense vehicle rule exists on the STREET VIEW camera
+# and nowhere else, so any alarm can only be that one.
+#
+# ADD A RULE TO A SECOND CAMERA AND THIS SILENTLY LIES - it will keep announcing
+# Street View for every camera. The fix at that point is the ISAPI alert
+# stream, which does name the channel.
+- id: 'dvr_vehicle_alert'
+  alias: "CCTV - Vehicle Detected (Street View)"
+  mode: single
+  # Repeat detections during the 10 minute window are dropped rather than
+  # queued. A car parked in frame re-alarms every few seconds - queueing would
+  # mean the panel replayed the alert long after the car had gone.
+  max_exceeded: silent
+  trigger:
+    - platform: webhook
+      webhook_id: !secret dvr_alarm_webhook_id
+      # Only reachable from this machine and the local network, never from
+      # outside. Webhooks carry no authentication, so this matters.
+      local_only: true
+      allowed_methods:
+        - POST
+  condition:
+    # 10 minute cooldown. On a first run last_triggered is None, hence the
+    # explicit test - without it the very first vehicle of the day is ignored.
+    - condition: template
+      value_template: >
+        {% set last = state_attr('automation.cctv_vehicle_detected_camera_1',
+                                 'last_triggered') %}
+        {{ last is none or (now() - last).total_seconds() > 600 }}
+  action:
+    - service: script.system_alert
+      data:
+        message: "Vehicle detected on the street camera."
+        sound: street_vehicle
+        audio_duration: 7
+        # No popup lingering over the camera we are about to show.
+        visual_duration: 4
+
+    # Fullscreen the camera, wherever the kiosk happens to be. This is the
+    # dashboard's own subview, so the WebRTC stream starts on arrival and is
+    # torn down on leaving - no permanently open connection to the DVR.
+    - service: browser_mod.navigate
+      data:
+        path: /cameras/street-view
+
+    - delay: "00:01:00"
+
+    # Back to the pump dashboard, which is the panel's home screen. One line to
+    # change if you would rather it returned to the camera grid.
+    - service: browser_mod.navigate
+      data:
+        path: /water-system-pump/water
+
+    - service: notify.notify
+      data:
+        message: >
+          Vehicle detected on Street View at
+          {{ now().strftime('%H:%M') }}.
+
+# 37. Close the DVR internet gate 30 minutes after it is opened.
+#
+# The gate exists so Hik-Connect can be used occasionally without leaving an
+# always-on tunnel to a cloud service in Hangzhou. That only holds if it
+# actually gets closed again, and "I'll turn it off later" is not a mechanism.
+#
+# Thirty minutes is long enough to check the cameras from the road and short
+# enough that forgetting costs nothing.
+#
+# State-based with `for:` rather than a delay, so it survives a Home Assistant
+# restart - the gate must not be left open because HA happened to reload.
+- id: 'dvr_internet_auto_close'
+  alias: "CCTV - Auto-close DVR Internet After 30 Minutes"
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: switch.dvr_internet_access
+      to: "on"
+      for: "00:30:00"
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.dvr_internet_access
+    - service: notify.notify
+      data:
+        message: >
+          DVR internet closed automatically after 30 minutes.
+          Hik-Connect will show the DVR offline until you open it again.
+
+# 39. Monthly runtime report, sent once the calendar month has closed.
+#
+# Same reasoning as the weekly: the monthly meters reset at 00:00 on the 1st,
+# so this reads `last_period` at 09:00 on the 1st and reports the month that
+# just finished. Complete, exact, no race against the reset.
+- id: 'monthly_pump_report'
+  alias: "Report - Monthly Pump Summary (1st)"
+  mode: single
+  trigger:
+    - platform: time
+      at: "09:05:00"
+  condition:
+    - condition: template
+      value_template: "{{ now().day == 1 }}"
+  action:
+    - action: notify.send_message
+      target:
+        entity_id: notify.email_report_target
+      data:
+        title: "Autoflow monthly report - {{ (now() - timedelta(days=1)).strftime('%B %Y') }}"
+        # Pipe, not ">". A folded scalar turns this into one paragraph.
+        message: |
+          ===========================================
+             AUTOFLOW PUMP STATION - MONTHLY REPORT
+             {{ (now() - timedelta(days=1)).strftime('%B %Y') }}
+          ===========================================
+
+
+          RUNTIME - MONTH JUST ENDED
+          -------------------------------------------
+                       hours      kWh    kWh/h
+          {{ '%-9s' | format('Kitchen') }}{{ '%7.1f' | format(state_attr('sensor.kitchen_runtime_monthly', 'last_period') | float(0)) }}{{ '%9.2f' | format(state_attr('sensor.kitchen_energy_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(
+               (state_attr('sensor.kitchen_energy_weekly', 'last_period') | float(0)) /
+               ([state_attr('sensor.kitchen_runtime_monthly', 'last_period') | float(0), 0.01] | max)) }}
+          {{ '%-9s' | format('Bath') }}{{ '%7.1f' | format(state_attr('sensor.bath_runtime_monthly', 'last_period') | float(0)) }}{{ '%9.2f' | format(state_attr('sensor.bath_energy_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(
+               (state_attr('sensor.bath_energy_weekly', 'last_period') | float(0)) /
+               ([state_attr('sensor.bath_runtime_monthly', 'last_period') | float(0), 0.01] | max)) }}
+          {{ '%-9s' | format('Utility') }}{{ '%7.1f' | format(state_attr('sensor.utility_runtime_monthly', 'last_period') | float(0)) }}{{ '%9.2f' | format(state_attr('sensor.utility_energy_weekly', 'last_period') | float(0)) }}{{ '%9.2f' | format(
+               (state_attr('sensor.utility_energy_weekly', 'last_period') | float(0)) /
+               ([state_attr('sensor.utility_runtime_monthly', 'last_period') | float(0), 0.01] | max)) }}
+
+          Running totals since these counters started:
+          -------------------------------------------
+          Kitchen  {{ states('sensor.kitchen_runtime_hours') }} h
+          Bath     {{ states('sensor.bath_runtime_hours') }} h
+          Utility  {{ states('sensor.utility_runtime_hours') }} h
+
+
+          SAFETY EVENTS THIS MONTH
+          -------------------------------------------
+          Dry-run shutdowns   {{ states('counter.dry_run_events') }}
+          Max-runtime stops   {{ states('counter.max_runtime_events') }}
+          Interlock blocks    {{ states('counter.interlock_blocks') }}
+          Power cuts          {{ states('counter.power_cuts') }}
+
+
+          ===========================================
+          Runtime is measured from actual current draw,
+          so wall-switch starts are included and a relay
+          that failed to close counts as zero.
+          ===========================================
+
+
+# 38. Accumulate pump runtime, one minute at a time.
+#
+# Deliberately simple. A minute tick is accurate to within 30 seconds per run,
+# which is far finer than anything these numbers are used for, and it survives
+# restarts because counters are stored - unlike a delay-based timer, which
+# would lose whatever was in flight.
+- id: 'accumulate_pump_runtime'
+  alias: "Stats - Accumulate Pump Runtime"
+  mode: single
+  max_exceeded: silent
+  trigger:
+    - platform: time_pattern
+      minutes: "/1"
+  action:
+    - repeat:
+        for_each:
+          - {"run": "binary_sensor.kitchen_pump_running", "c": "counter.kitchen_run_minutes"}
+          - {"run": "binary_sensor.bath_pump_running", "c": "counter.bath_run_minutes"}
+          - {"run": "binary_sensor.utility_pump_running", "c": "counter.utility_run_minutes"}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ is_state(repeat.item.run, 'on') }}"
+            then:
+              - service: counter.increment
+                target:
+                  entity_id: "{{ repeat.item.c }}"
+
+# 40. Mail whatever the watchdog repaired, or gave up on.
+#
+# The watchdog runs on the host and writes a JSON report; sensor.watchdog
+# reads it. Its `seq` value only increments when there is something worth
+# saying, so any change here means real news - silence means healthy, and
+# there is no routine mail to start ignoring.
+#
+# WHY THE WATCHDOG DOES NOT SEND THIS ITSELF
+#
+# It could, but that would mean a second copy of the Gmail credentials sitting
+# on the Pi. Routing through Home Assistant keeps them in one place. The cost
+# is that a report generated while HA was down waits until HA is back - which
+# is fine, because it arrives with the restart it is reporting.
+- id: 'watchdog_report_mail'
+  alias: "Report - Watchdog Repairs"
+  mode: queued
+  max: 5
+  trigger:
+    - platform: state
+      entity_id: sensor.watchdog
+  condition:
+    # Ignore the transitions into and out of unavailable that happen on every
+    # restart, and the first reading after HA starts.
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state not in ['unknown','unavailable']
+           and trigger.to_state.state not in ['unknown','unavailable']
+           and trigger.to_state.state != trigger.from_state.state }}
+  action:
+    - variables:
+        acted: "{{ state_attr('sensor.watchdog','acted') or [] }}"
+        failed: "{{ state_attr('sensor.watchdog','failed') or [] }}"
+    - action: notify.send_message
+      target:
+        entity_id: notify.email_report_target
+      data:
+        title: >
+          Autoflow watchdog -
+          {{ 'action needed' if failed | length > 0 else 'self-repaired' }}
+        # Pipe, not ">". A folded scalar collapses this into one paragraph.
+        message: |
+          ===========================================
+             AUTOFLOW WATCHDOG
+             {{ state_attr('sensor.watchdog','checked') }}
+          ===========================================
+
+          {% if acted | length > 0 %}
+          REPAIRED AUTOMATICALLY
+          -------------------------------------------
+          {% for a in acted %}
+          - {{ a }}
+          {% endfor %}
+          {% endif %}
+          {% if failed | length > 0 %}
+
+          NEEDS YOU
+          -------------------------------------------
+          {% for f in failed %}
+          - {{ f }}
+          {% endfor %}
+          {% endif %}
+
+
+          -------------------------------------------
+          The watchdog never touches the pumps or the
+          relays. It restarts stopped services, brings
+          the kiosk browser back, and restarts Home
+          Assistant if it stops answering. After three
+          attempts in an hour it stops trying and
+          reports instead.
+          ===========================================
+
+# 41. Count pump starts.
+#
+# Triggered off <pump>_pump_running rather than the switch, so a start from
+# the wall counts too - and a relay commanded on that never actually closed
+# does not. Same principle as the runtime counters: measure the motor, not
+# the instruction.
+- id: 'count_pump_starts'
+  alias: "Stats - Count Pump Starts"
+  mode: parallel
+  max: 6
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.kitchen_pump_running
+      to: "on"
+      id: kitchen
+    - platform: state
+      entity_id: binary_sensor.bath_pump_running
+      to: "on"
+      id: bath
+    - platform: state
+      entity_id: binary_sensor.utility_pump_running
+      to: "on"
+      id: utility
+  condition:
+    # Ignore the transition Home Assistant fabricates on startup when it
+    # restores a sensor that was already on - that is not a new start.
+    - condition: template
+      value_template: >
+        {{ trigger.from_state is not none
+           and trigger.from_state.state not in ['unknown','unavailable'] }}
+  action:
+    - service: counter.increment
+      target:
+        entity_id: "counter.{{ trigger.id }}_starts"

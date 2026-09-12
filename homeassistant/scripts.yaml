@@ -1,0 +1,375 @@
+pump_stats_popup:
+  alias: "Show Live Pump Stats Popup"
+  description: >
+    Fullscreen popup with LIVE readings for one pump. Uses an entities card
+    rather than a markdown template, so the numbers keep updating while the
+    popup is open instead of freezing at the values from the moment it opened.
+  mode: parallel
+  max: 3
+  fields:
+    pump:
+      description: "kitchen | bath | utility"
+      example: "kitchen"
+    reason:
+      description: "Shown in the title, e.g. 'Manual switch'"
+      example: "Manual switch"
+
+  sequence:
+    - service: shell_command.screen_wake
+    - choose:
+        # ---------------- KITCHEN ----------------
+        - conditions: "{{ pump == 'kitchen' }}"
+          sequence:
+            - service: browser_mod.popup
+              data:
+                title: "Kitchen Pump - {{ reason | default('Running') }}"
+                size: normal
+                dismissable: true
+                timeout: 120000
+                right_button: "Dismiss"
+                content:
+                  type: entities
+                  entities:
+                    - entity: binary_sensor.kitchen_pump_running
+                      name: Motor
+                    - entity: sensor.pump_1_current
+                      name: Current
+                    - entity: sensor.pump_1_power
+                      name: Power
+                    - entity: sensor.pump_1_voltage
+                      name: Voltage
+                    - entity: sensor.pump_1_run_timer
+                      name: Running for
+                    - entity: binary_sensor.top_tank_full_float
+                      name: Tank full
+                    - entity: switch.kitchen_pump
+                      name: Relay (HA control)
+
+        # ---------------- BATH ----------------
+        - conditions: "{{ pump == 'bath' }}"
+          sequence:
+            - service: browser_mod.popup
+              data:
+                title: "Bath Pump - {{ reason | default('Running') }}"
+                size: normal
+                dismissable: true
+                timeout: 120000
+                right_button: "Dismiss"
+                content:
+                  type: entities
+                  entities:
+                    - entity: binary_sensor.bath_pump_running
+                      name: Motor
+                    - entity: sensor.pump_2_current
+                      name: Current
+                    - entity: sensor.pump_2_power
+                      name: Power
+                    - entity: sensor.pump_2_voltage
+                      name: Voltage
+                    - entity: sensor.pump_2_run_timer
+                      name: Running for
+                    - entity: binary_sensor.bottom_tank_full_float
+                      name: Tank full
+                    - entity: switch.bath_pump
+                      name: Relay (HA control)
+
+        # ---------------- UTILITY ----------------
+        - conditions: "{{ pump == 'utility' }}"
+          sequence:
+            - service: browser_mod.popup
+              data:
+                title: "Utility Pump - {{ reason | default('Running') }}"
+                size: normal
+                dismissable: true
+                timeout: 120000
+                right_button: "Dismiss"
+                content:
+                  type: entities
+                  entities:
+                    - entity: binary_sensor.utility_pump_running
+                      name: Motor
+                    - entity: sensor.pump_3_current
+                      name: Current
+                    - entity: sensor.pump_3_power
+                      name: Power
+                    - entity: sensor.pump_3_voltage
+                      name: Voltage
+                    - entity: sensor.pump_3_run_timer
+                      name: Running for
+                    - entity: binary_sensor.sump_1_full_float
+                      name: Sump 1 full
+                    - entity: switch.utility_pump
+                      name: Relay (HA control)
+
+# ============================================================================
+# SHUT DOWN THE PI
+# ============================================================================
+# ADDED 29-Aug-2026. Powers the machine down cleanly without SSH or reaching
+# the physical button, which is behind the enclosure.
+#
+# The announcement comes FIRST and is given time to finish. Otherwise the
+# shutdown starts mid-sentence and the only feedback you get is the audio
+# cutting off - which looks identical to the button not working.
+#
+# shell_command.request_shutdown writes a file; shutdown_bridge.sh on the host
+# acts on it. `shutdown` inside the container reaches nothing.
+#
+# Any pump still running is stopped first. systemd would cut power to the
+# relays a few seconds later anyway, but stopping them deliberately means the
+# pumps are logged as stopped rather than simply vanishing mid-run - and the
+# fail-safe automations do not fire a "no telemetry" alarm on the way down.
+shutdown_pi:
+  alias: "Shut Down the Pi"
+  description: "Stops any running pump, announces, then powers the Pi down cleanly."
+  mode: single
+  sequence:
+    - service: switch.turn_off
+      target:
+        entity_id:
+          - switch.kitchen_pump
+          - switch.bath_pump
+          - switch.utility_pump
+
+    - service: script.system_alert
+      data:
+        message: "Shutting down now. Wait for the green light to stop before removing power."
+        audio_duration: 8
+        visual_duration: 4
+
+    - delay: "00:00:08"
+
+    - service: shell_command.request_shutdown
+
+system_alert:
+  alias: "Master System Alert (Audio & Visual)"
+  description: "Plays a TTS message, flashes LEDs, and fires a Siri popup on all screens."
+  mode: parallel
+  fields:
+    message:
+      description: "The text you want the system to speak"
+      example: "The kitchen tank is full."
+    sound:
+      description: >
+        OPTIONAL. Filename (without .mp3) of a pre-rendered clip in
+        config/www/alerts/. If given, that file is played instead of calling
+        Google Translate. If omitted, it falls back to live TTS.
+      example: "kitchen_empty"
+    audio_duration:
+      description: "How long to wait for the audio to finish (seconds)"
+      example: 10
+    visual_duration:
+      description: "How long to flash the physical LEDs (seconds)"
+      example: 20
+    urgent:
+      description: >
+        OPTIONAL. true forces an iOS critical alert - one that pierces silent
+        mode and Do Not Disturb. Usually unnecessary: the list of critical
+        sounds in the sequence decides automatically.
+      example: true
+
+  sequence:
+    # 0. WAKE THE SCREEN
+    #
+    # Brightness only. The idle dimmer no longer grabs the touchscreen, so a lit
+    # panel is a usable panel.
+    #
+    # Note this does NOT clear the screen lock - if the panel is locked, an
+    # alert lights it and speaks, and the pattern overlay stays up. That is
+    # deliberate: an alert should never be a way past the lock.
+    - service: shell_command.screen_wake
+
+    # 0b. PUSH TO THE PHONE  (added 23-Aug-2026)
+    #
+    # Every alert routes through this script, so one step covers all of them -
+    # dry run, telemetry loss, tank full, vehicle at the gate. The alternative
+    # was editing thirty automations.
+    #
+    # IT RUNS FIRST because it is the only part that reaches you when you are
+    # not in the building. If the media player hangs or the popup fails, the
+    # notification has already gone.
+    #
+    # TWO BRANCHES RATHER THAN ONE TEMPLATED PAYLOAD
+    #
+    # An iOS critical alert needs a nested object:
+    #     sound: {name: default, critical: 1, volume: 1.0}
+    # not the string "critical" - that would send iOS looking for a sound file
+    # by that name and it would fail quietly. A Jinja expression cannot
+    # conditionally produce a mapping here, so the two cases are written out.
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {% set crit = ['dry_run','no_telemetry','telemetry_lost',
+                               'telemetry_stop','no_start','no_stop',
+                               'no_supply','power_cut'] %}
+                {{ (urgent | default(false))
+                   or (crit | select('in', sound | default('')) | list | count > 0) }}
+          sequence:
+            # Pierces silent mode and Do Not Disturb. Reserved for the alerts
+            # where the answer changes if you find out six hours later:
+            # running dry, running unmonitored, failing to start or stop, and
+            # losing mains.
+            - action: notify.mobile_app_your_phone
+              continue_on_error: true
+              data:
+                title: "Autoflow"
+                message: "{{ message }}"
+                data:
+                  url: /water-system-pump/water
+                  tag: "autoflow_{{ sound | default('general') }}"
+                  push:
+                    interruption-level: critical
+                    sound:
+                      name: default
+                      critical: 1
+                      volume: 1.0
+      default:
+        # Everything else: a normal notification. Repeats of the same alert
+        # replace each other rather than stacking, so a warning firing every
+        # thirty seconds is one notification, not forty.
+        - action: notify.mobile_app_your_phone
+          continue_on_error: true
+          data:
+            title: "Autoflow"
+            message: "{{ message }}"
+            data:
+              url: /water-system-pump/water
+              tag: "autoflow_{{ sound | default('general') }}"
+
+    # 1. AUDIO
+    #
+    # Pre-rendered clips are preferred over live TTS for three reasons:
+    #   - they already have the chime baked onto the front
+    #   - they cost the Pi nothing to produce, only to decode
+    #   - they still work with the internet down, which matters for a system
+    #     whose job is to warn you about water
+    #
+    # Anything with dynamic text (a pump name, a measured value) has no
+    # pre-rendered file and falls through to Google Translate as before.
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ (sound | default('')) | trim | length > 0 }}"
+          sequence:
+            - service: media_player.play_media
+              target:
+                entity_id: media_player.music_player_daemon
+              data:
+                media_content_id: "http://127.0.0.1:8123/local/alerts/{{ sound | trim }}.mp3"
+                media_content_type: music
+      default:
+        - service: tts.google_translate_say
+          data:
+            entity_id: media_player.music_player_daemon
+            message: "{{ message }}"
+
+    # Give the audio 1 second to buffer before the popup fires
+    - delay: "00:00:01"
+
+    # 2. Trigger full-screen popup on all screens
+    - service: browser_mod.popup
+      data:
+        title: "System Alert"
+        size: fullscreen
+        browser_id:
+          - <BROWSER_ID_1>
+          - <BROWSER_ID_2>
+          - <BROWSER_ID_3>
+          - <BROWSER_ID_4>
+        dismissable: true
+        timeout: "{{ visual_duration * 1000 }}"
+        content:
+          type: vertical-stack
+          cards:
+            # The message. Styling lives in card_mod, NOT in the markdown -
+            # Home Assistant strips inline HTML styles, which is why the
+            # previous 4em heading rendered at body size.
+            - type: markdown
+              content: |
+                {% set critical = [
+                     'dry_run', 'no_telemetry', 'telemetry_lost',
+                     'telemetry_stop', 'no_start', 'no_stop',
+                     'no_supply', 'power_cut'] -%}
+                {% if (sound | default('')) in critical -%}
+                # Critical
+                {% endif -%}
+                {{ message }}
+              card_mod:
+                style:
+                  .: |
+                    ha-card {
+                      background: rgba(28,28,30,0.94) !important;
+                      border: none !important;
+                      border-radius: 28px !important;
+                      box-shadow: 0 20px 60px rgba(0,0,0,0.8) !important;
+                      padding: 26px 34px !important;
+                    }
+                  # Shadow-piercing. Plain `ha-card` rules apply; anything
+                  # deeper needs the `$` or it is silently discarded.
+                  ha-markdown$: |
+                    h1 {
+                      font-size: 17px !important;
+                      letter-spacing: 4px !important;
+                      text-transform: uppercase !important;
+                      color: #FF453A !important;
+                      text-align: center !important;
+                      margin: 0 0 18px 0 !important;
+                      font-weight: 700 !important;
+                      border-bottom: none !important;
+                    }
+                    p {
+                      font-size: 36px !important;
+                      line-height: 1.4 !important;
+                      color: #ffffff !important;
+                      text-align: center !important;
+                      margin: 0 !important;
+                    }
+                    @keyframes pulse {
+                      0%, 100% { opacity: 1; }
+                      50%      { opacity: 0.55; }
+                    }
+
+            # Acknowledge, at a size you can hit without aiming. The dialog's
+            # own right_button is a small corner link and cannot be restyled
+            # from here, so this sits inside the content where it can be made
+            # properly large. Both still work.
+            - type: button
+              name: ACKNOWLEDGE
+              icon: mdi:check-circle-outline
+              show_state: false
+              tap_action:
+                action: perform-action
+                perform_action: browser_mod.close_popup
+              card_mod:
+                style: |
+                  ha-card {
+                    background: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    margin-top: 18px !important;
+                    padding: 8px 3vw 8px 0 !important;
+                    display: flex !important;
+                    justify-content: flex-end !important;
+                  }
+                  ha-icon {
+                    color: #0A84FF !important;
+                    --mdc-icon-size: 26px !important;
+                  }
+                  .name {
+                    color: #0A84FF !important;
+                    font-size: 26px !important;
+                    font-weight: 600 !important;
+                    letter-spacing: 0.3px !important;
+                  }
+
+    # 3. Wait for the audio to finish
+    - delay:
+        seconds: "{{ audio_duration }}"
+
+    # 4. Screen re-locks itself.
+    #
+    # Previously this forced the panel dark again between midnight and 6am.
+    # That is now the screen lock daemon's job - it blanks 30 seconds after the
+    # last touch, at any hour. Two things deciding when the screen goes dark
+    # would fight each other, and the one holding the touchscreen grab has to
+    # win, so it may as well be the only one.
