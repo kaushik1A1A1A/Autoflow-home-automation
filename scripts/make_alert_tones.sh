@@ -24,7 +24,7 @@
 #                    The standard "success" shape - it is what almost every
 #                    device uses for a reason.
 #
-#   street_vehicle   two quick taps, high, twice. Deliberately not a chord
+#   perimeter_vehicle   two quick taps, high, twice. Deliberately not a chord
 #                    at all - it should not be mistaken for either power
 #                    tone in the moment you hear it.
 #
@@ -32,7 +32,7 @@
 #
 # Matched with loudnorm rather than by ear. All three are normalised to the
 # same perceived level, so none of them jumps out relative to the others.
-# street_vehicle sits 2 LU hotter on purpose - it is the one competing with
+# perimeter_vehicle sits 2 LU hotter on purpose - it is the one competing with
 # outdoor noise.
 
 set -e
@@ -40,7 +40,7 @@ set -e
 A=/config/www/alerts
 HOST=/home/<USER>/homeassistant/config/www/alerts
 
-for f in street_vehicle power_cut power_restored; do
+for f in perimeter_vehicle power_cut power_restored; do
     if [ -f "$HOST/$f.mp3" ] && [ ! -f "$HOST/$f.mp3.bak-speech" ]; then
         cp -p "$HOST/$f.mp3" "$HOST/$f.mp3.bak-speech"
         echo "  backed up $f.mp3"
@@ -57,7 +57,7 @@ tone() {
 
 SIL="anullsrc=r=44100:cl=mono:d=0.09"
 
-# --- street_vehicle: two quick taps, twice. Not a chord ---------------
+# --- perimeter_vehicle: two quick taps, twice. Not a chord ---------------
 docker exec homeassistant ffmpeg -y -loglevel error \
   -f lavfi -i "$(tone 1046 11 0.20)" \
   -f lavfi -i "$(tone 1046 10 0.26)" \
@@ -66,8 +66,8 @@ docker exec homeassistant ffmpeg -y -loglevel error \
   -f lavfi -i "$(tone 1046 8 0.40)" \
   -filter_complex "[0:a][1:a][2:a][3:a][4:a]concat=n=5:v=0:a=1,\
 lowpass=f=6000,loudnorm=I=-14:TP=-1.5:LRA=11[out]" \
-  -map "[out]" -codec:a libmp3lame -q:a 3 "$A/street_vehicle.mp3"
-echo "  street_vehicle.mp3   two quick taps, twice"
+  -map "[out]" -codec:a libmp3lame -q:a 3 "$A/perimeter_vehicle.mp3"
+echo "  perimeter_vehicle.mp3   two quick taps, twice"
 
 # --- power_cut: D minor falling, low and slow -------------------------
 docker exec homeassistant ffmpeg -y -loglevel error \
@@ -91,10 +91,10 @@ echo "  power_restored.mp3   C major rising"
 
 echo ""
 echo "Listen in a browser:"
-for f in street_vehicle power_cut power_restored; do
+for f in perimeter_vehicle power_cut power_restored; do
     echo "  http://<HA_HOST>:8123/local/alerts/$f.mp3"
 done
 echo ""
 echo "To put the spoken versions back:"
-echo "  for f in street_vehicle power_cut power_restored; do"
+echo "  for f in perimeter_vehicle power_cut power_restored; do"
 echo "    cp $HOST/\$f.mp3.bak-speech $HOST/\$f.mp3; done"

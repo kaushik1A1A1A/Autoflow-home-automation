@@ -69,10 +69,15 @@ they are commonly wired with the logic supply taken from the controller's 5 V
 rail. Both defaults are wrong when driving from 3.3 V logic:
 
 - With the logic supply at 5 V and a GPIO driven **high** to 3.3 V, roughly 1.7 V
-  remains across the optocoupler LED and its resistor. Current flows **backwards
-  into the GPIO pin** — around half a milliamp, continuously, for as long as that
-  relay is off. That sits at the injection limit for the pin. It is never enough
-  to fail today and exactly enough to destroy a pin over months.
+  remains across the optocoupler LED and its series resistor. Current flows
+  **backwards into the GPIO pin**, continuously, for as long as that relay is
+  off. The magnitude depends on the series resistor, which differs between board
+  vendors and is not marked on this one: take off the LED's forward drop and a
+  few tenths of a volt remain across it, which for a resistor of the usual order
+  puts the current somewhere around a milliamp or below. That is small enough to
+  never fail today and not small enough to be harmless for months. **Measure the
+  resistor on your own board rather than trusting this estimate** — the mechanism
+  is the point, not the figure.
 - With the jumper fitted, the coil supply and logic supply share a rail and a
   ground, so the optocouplers are bypassed for their main purpose. Coil switching
   transients reach the controller.

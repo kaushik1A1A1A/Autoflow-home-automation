@@ -35,11 +35,29 @@ HOSTDIR="$REPO/host"
 SRC=/home/USER
 
 cd "$REPO"
+
+# --- refuse to push anywhere except the intended private repository ---
+# This script sweeps the entire home directory - real addresses, real
+# camera names, host config - and pushes the result. That is safe only
+# while origin points at a private repository. Repositories get renamed,
+# deleted and recreated; origin does not follow them, it simply resolves
+# to whatever answers to that name today. Pin it here and the question
+# can never come up again.
+EXPECTED_ORIGIN="git@github.com:YOUR_USERNAME/YOUR_PRIVATE_REPO.git"
+ACTUAL_ORIGIN=$(git remote get-url origin 2>/dev/null || true)
+if [ "$ACTUAL_ORIGIN" != "$EXPECTED_ORIGIN" ]; then
+    echo "REFUSING TO RUN: origin is '$ACTUAL_ORIGIN'" >&2
+    echo "Expected '$EXPECTED_ORIGIN'." >&2
+    echo "Edit EXPECTED_ORIGIN above if this is deliberate." >&2
+    exit 1
+fi
+
 mkdir -p "$HOSTDIR" "$HOSTDIR/systemd"
 
 # --- programs --------------------------------------------------------
-# Credentials are skipped by name. This repo is private, but "private" is a
-# setting someone can change later, and a leaked key cannot be un-leaked.
+# Credentials are skipped by name. The target repository is private, but
+# "private" is a setting someone can change later, and a leaked key cannot
+# be un-leaked.
 NPROG=0
 SKIPPED=""
 for f in "$SRC"/*.py "$SRC"/*.sh; do

@@ -181,7 +181,7 @@ system_alert:
     # 0b. PUSH TO THE PHONE  (added 23-Aug-2026)
     #
     # Every alert routes through this script, so one step covers all of them -
-    # dry run, telemetry loss, tank full, vehicle at the gate. The alternative
+    # dry run, telemetry loss, tank full, vehicle detected. The alternative
     # was editing thirty automations.
     #
     # IT RUNS FIRST because it is the only part that reaches you when you are

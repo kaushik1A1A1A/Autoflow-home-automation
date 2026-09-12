@@ -23,12 +23,12 @@ say which camera fired. Decoding further would not have produced the answer.
 
 *** THE ASSUMPTION THIS RESTS ON ***
 
-The AcuSense vehicle rule is configured on the STREET VIEW camera ONLY.
-Therefore any alarm arriving here is Street View, by elimination rather than by
+The AcuSense vehicle rule is configured on ONE camera only.
+Therefore any alarm arriving here is from that camera, by elimination rather than
 reading it out of the packet.
 
 IF YOU EVER ADD A DETECTION RULE TO ANOTHER CAMERA, THIS BECOMES WRONG - every
-alert will still say Street View and nothing will complain. Change CAMERA below
+alert will still name the same camera and nothing will complain. Change CAMERA
 and revisit, or go back to the ISAPI alert stream, which does name the channel.
 
 INSTALL

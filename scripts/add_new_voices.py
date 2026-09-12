@@ -45,8 +45,8 @@ CHIME = os.path.join(RAW_DIR, "chime_a.mp3")
 VOICE_DELAY_MS = 900
 
 NEW = {
-    "street_vehicle":
-        "Vehicle detected on the street camera.",
+    "perimeter_vehicle":
+        "Vehicle detected.",
 }
 
 FILTER = (

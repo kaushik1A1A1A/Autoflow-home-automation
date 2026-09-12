@@ -1777,14 +1777,14 @@
 # decoded on 18-Aug-2026: a message reporting four simultaneous alarms contains
 # four byte-for-byte IDENTICAL records. The channel simply is not in there.
 #
-# It works because the AcuSense vehicle rule exists on the STREET VIEW camera
+# It works because the AcuSense vehicle rule exists on one camera only
 # and nowhere else, so any alarm can only be that one.
 #
 # ADD A RULE TO A SECOND CAMERA AND THIS SILENTLY LIES - it will keep announcing
-# Street View for every camera. The fix at that point is the ISAPI alert
+# that same camera for every channel. The fix at that point is the ISAPI alert
 # stream, which does name the channel.
 - id: 'dvr_vehicle_alert'
-  alias: "CCTV - Vehicle Detected (Street View)"
+  alias: "CCTV - Vehicle Detected (Perimeter)"
   mode: single
   # Repeat detections during the 10 minute window are dropped rather than
   # queued. A car parked in frame re-alarms every few seconds - queueing would
@@ -1809,8 +1809,8 @@
   action:
     - service: script.system_alert
       data:
-        message: "Vehicle detected on the street camera."
-        sound: street_vehicle
+        message: "Vehicle detected."
+        sound: perimeter_vehicle
         audio_duration: 7
         # No popup lingering over the camera we are about to show.
         visual_duration: 4
@@ -1820,7 +1820,7 @@
     # torn down on leaving - no permanently open connection to the DVR.
     - service: browser_mod.navigate
       data:
-        path: /cameras/street-view
+        path: /cameras/perimeter
 
     - delay: "00:01:00"
 
@@ -1833,7 +1833,7 @@
     - service: notify.notify
       data:
         message: >
-          Vehicle detected on Street View at
+          Vehicle detected at
           {{ now().strftime('%H:%M') }}.
 
 # 37. Close the DVR internet gate 30 minutes after it is opened.
